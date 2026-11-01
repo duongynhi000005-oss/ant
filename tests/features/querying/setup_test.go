@@ -1,0 +1,10 @@
+package querying
+
+import "github.com/skudra-go/ant/tests/features/fixture"
+
+// The examples run on fixture.Seed: Alice (30, no bio), Bob (17, no bio), and
+// Carol (40, bio "Gopher").
+var (
+	U = fixture.U
+	P = fixture.P
+)

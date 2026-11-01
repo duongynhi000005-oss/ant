@@ -1,0 +1,960 @@
+ant: const Added
+ant: const Cascade
+ant: const Deleted
+ant: const Detached
+ant: const Modified
+ant: const NoAction
+ant: const Restrict
+ant: const SetNull
+ant: const Unchanged
+ant: func (b *ModelBuilder[E]) BelongsTo[R any](rel **R) *RelationBuilder
+ant: func (b *ModelBuilder[E]) Check(name, expr string)
+ant: func (b *ModelBuilder[E]) Column[V any](field *V) *ColumnBuilder
+ant: func (b *ModelBuilder[E]) Comment(text string)
+ant: func (b *ModelBuilder[E]) Comparer[V any](field *V, equal func(a, b V) bool)
+ant: func (b *ModelBuilder[E]) CompositeKey(fields ...FieldRef)
+ant: func (b *ModelBuilder[E]) Discriminator[V comparable](field *V, value V)
+ant: func (b *ModelBuilder[E]) ExcludeFromMigrations()
+ant: func (b *ModelBuilder[E]) Filter(name string, filter func(context.Context) Cond)
+ant: func (b *ModelBuilder[E]) ForeignKey(fields ...FieldRef) *ForeignKeyBuilder
+ant: func (b *ModelBuilder[E]) HasManyThrough[R, A, C any](rel *[]R, parentKey *A, throughKey *C) *RelationBuilder
+ant: func (b *ModelBuilder[E]) HasMany[R any](rel *[]R) *RelationBuilder
+ant: func (b *ModelBuilder[E]) HasOneThrough[R, A, C any](rel **R, parentKey *A, throughKey *C) *RelationBuilder
+ant: func (b *ModelBuilder[E]) HasOne[R any](rel **R) *RelationBuilder
+ant: func (b *ModelBuilder[E]) IndexExpr(expr string) *IndexBuilder
+ant: func (b *ModelBuilder[E]) Index[V any](field *V) *IndexBuilder
+ant: func (b *ModelBuilder[E]) KeyName(name string)
+ant: func (b *ModelBuilder[E]) Key[V any](field *V) *KeyBuilder
+ant: func (b *ModelBuilder[E]) ManyToMany[R any](rel *[]R) *RelationBuilder
+ant: func (b *ModelBuilder[E]) NoKey()
+ant: func (b *ModelBuilder[E]) NoTimestamps()
+ant: func (b *ModelBuilder[E]) PartitionByHash(fields ...FieldRef)
+ant: func (b *ModelBuilder[E]) PartitionByList(fields ...FieldRef)
+ant: func (b *ModelBuilder[E]) PartitionByRange(fields ...FieldRef)
+ant: func (b *ModelBuilder[E]) Schema(name string)
+ant: func (b *ModelBuilder[E]) Table(name string)
+ant: func (b *ModelBuilder[E]) Validate[V any](field *V, rule func(V) error)
+ant: func (b *ModelBuilder[E]) View(name string)
+ant: func (c *ColumnBuilder) Collation(name string) *ColumnBuilder
+ant: func (c *ColumnBuilder) Comment(text string) *ColumnBuilder
+ant: func (c *ColumnBuilder) Default(expr string) *ColumnBuilder
+ant: func (c *ColumnBuilder) Enum(name string, values ...string) *ColumnBuilder
+ant: func (c *ColumnBuilder) Fixed(n int) *ColumnBuilder
+ant: func (c *ColumnBuilder) Generated(expr string) *ColumnBuilder
+ant: func (c *ColumnBuilder) Length(n int) *ColumnBuilder
+ant: func (c *ColumnBuilder) NotNull() *ColumnBuilder
+ant: func (c *ColumnBuilder) Nullable() *ColumnBuilder
+ant: func (c *ColumnBuilder) Precision(precision, scale int) *ColumnBuilder
+ant: func (c *ColumnBuilder) Sensitive() *ColumnBuilder
+ant: func (c *ColumnBuilder) Sequence(name string, options ...SequenceOption) *ColumnBuilder
+ant: func (c *ColumnBuilder) Type(sql string) *ColumnBuilder
+ant: func (c *ColumnBuilder) Unique(name ...string) *ColumnBuilder
+ant: func (c *Conflict) And(ref FieldRef) *Conflict
+ant: func (c *Conflict) DoNothing() *Conflict
+ant: func (c *Conflict) DoUpdate(fields ...FieldRef) *Conflict
+ant: func (c *Conflict) Set(assignments ...Assignment) *Conflict
+ant: func (c *Context) ClearTracked()
+ant: func (c *Context) Close() error
+ant: func (c *Context) Commit() error
+ant: func (c *Context) DB() *sql.DB
+ant: func (c *Context) DebugTracked() string
+ant: func (c *Context) Dialect() dialect.Dialect
+ant: func (c *Context) EnsureCreated(ctx context.Context) error
+ant: func (c *Context) EnsureDeleted(ctx context.Context) error
+ant: func (c *Context) HasChanges() bool
+ant: func (c *Context) Release(ctx context.Context, name string) error
+ant: func (c *Context) Rollback() error
+ant: func (c *Context) RollbackTo(ctx context.Context, name string) error
+ant: func (c *Context) SaveChanges(ctx context.Context) error
+ant: func (c *Context) Savepoint(ctx context.Context, name string) error
+ant: func (c *Context) Tx[DB any](ctx context.Context, f func(tx *DB) error, options ...TxOption) error
+ant: func (c CaseExpr[V]) Else(value V) Expr[V]
+ant: func (c CaseExpr[V]) ElseExpr(value Expr[V]) Expr[V]
+ant: func (c CaseExpr[V]) End() Expr[sql.Null[V]]
+ant: func (c CaseExpr[V]) When(cond Cond, then V) CaseExpr[V]
+ant: func (c CaseExpr[V]) WhenExpr(cond Cond, then Expr[V]) CaseExpr[V]
+ant: func (e *ConcurrencyError) Error() string
+ant: func (e *ConcurrencyError) Unwrap() error
+ant: func (e *EntityEntry[T]) Changed() []string
+ant: func (e *EntityEntry[T]) State() State
+ant: func (e *ValidationError) Error() string
+ant: func (e *ValidationError) Unwrap() error
+ant: func (e Expr[V]) Asc() Sort
+ant: func (e Expr[V]) Desc() Sort
+ant: func (e Expr[V]) Div(v V) Expr[V]
+ant: func (e Expr[V]) Eq(v V) Cond
+ant: func (e Expr[V]) EqExpr(other Expr[V]) Cond
+ant: func (e Expr[V]) Filter(conds ...Cond) Expr[V]
+ant: func (e Expr[V]) Gt(v V) Cond
+ant: func (e Expr[V]) GtExpr(other Expr[V]) Cond
+ant: func (e Expr[V]) Gte(v V) Cond
+ant: func (e Expr[V]) IsNotNull() Cond
+ant: func (e Expr[V]) IsNull() Cond
+ant: func (e Expr[V]) Lt(v V) Cond
+ant: func (e Expr[V]) LtExpr(other Expr[V]) Cond
+ant: func (e Expr[V]) Lte(v V) Cond
+ant: func (e Expr[V]) Minus(v V) Expr[V]
+ant: func (e Expr[V]) Ne(v V) Cond
+ant: func (e Expr[V]) Over(w Window) Expr[V]
+ant: func (e Expr[V]) Plus(v V) Expr[V]
+ant: func (e Expr[V]) Times(v V) Expr[V]
+ant: func (f *FieldConvention) SetLength(n int)
+ant: func (f *FieldConvention) SetSensitive()
+ant: func (f *FieldConvention) SetType(sql string)
+ant: func (g *Gob[V]) Scan(src any) error
+ant: func (g *Grouped) Having(conds ...Cond) *Grouped
+ant: func (g *Grouped) Limit(limit int) *Grouped
+ant: func (g *Grouped) Offset(offset int) *Grouped
+ant: func (g *Grouped) Order(terms ...Sort) *Grouped
+ant: func (g Gob[V]) ColumnType(dialect string) string
+ant: func (g Gob[V]) Value() (driver.Value, error)
+ant: func (i *IndexBuilder) AndExpr(expr string) *IndexBuilder
+ant: func (i *IndexBuilder) And[V any](field *V) *IndexBuilder
+ant: func (i *IndexBuilder) Concurrently() *IndexBuilder
+ant: func (i *IndexBuilder) Desc() *IndexBuilder
+ant: func (i *IndexBuilder) Include[V any](field *V) *IndexBuilder
+ant: func (i *IndexBuilder) Name(name string) *IndexBuilder
+ant: func (i *IndexBuilder) Unique() *IndexBuilder
+ant: func (i *IndexBuilder) Using(method string) *IndexBuilder
+ant: func (i *IndexBuilder) Where(condition string) *IndexBuilder
+ant: func (j *JSON[V]) Scan(src any) error
+ant: func (j *JSON[V]) UnmarshalJSON(data []byte) error
+ant: func (j *Join2[A, B]) Distinct() *Join2[A, B]
+ant: func (j *Join2[A, B]) GroupByExpr[V any](e Expr[V]) *Grouped
+ant: func (j *Join2[A, B]) GroupBy[V any](field *V) *Grouped
+ant: func (j *Join2[A, B]) JoinMany[C any](rel *[]C) *Join3[A, B, C]
+ant: func (j *Join2[A, B]) JoinOn[C any](on ...Cond) *Join3[A, B, C]
+ant: func (j *Join2[A, B]) Join[C any](rel **C) *Join3[A, B, C]
+ant: func (j *Join2[A, B]) LeftJoinMany[C any](rel *[]C) *Join3[A, B, C]
+ant: func (j *Join2[A, B]) LeftJoinOn[C any](on ...Cond) *Join3[A, B, C]
+ant: func (j *Join2[A, B]) LeftJoin[C any](rel **C) *Join3[A, B, C]
+ant: func (j *Join2[A, B]) Limit(limit int) *Join2[A, B]
+ant: func (j *Join2[A, B]) Offset(offset int) *Join2[A, B]
+ant: func (j *Join2[A, B]) Order(terms ...Sort) *Join2[A, B]
+ant: func (j *Join2[A, B]) OrderByDesc[V Ordered](field *V) *Join2[A, B]
+ant: func (j *Join2[A, B]) OrderBy[V Ordered](field *V) *Join2[A, B]
+ant: func (j *Join2[A, B]) Select[R any](f func(*A, *B) R) *Projection[R]
+ant: func (j *Join2[A, B]) Where(c ...Cond) *Join2[A, B]
+ant: func (j *Join3[A, B, C]) Distinct() *Join3[A, B, C]
+ant: func (j *Join3[A, B, C]) GroupByExpr[V any](e Expr[V]) *Grouped
+ant: func (j *Join3[A, B, C]) GroupBy[V any](field *V) *Grouped
+ant: func (j *Join3[A, B, C]) JoinMany[D any](rel *[]D) *Join4[A, B, C, D]
+ant: func (j *Join3[A, B, C]) JoinOn[D any](on ...Cond) *Join4[A, B, C, D]
+ant: func (j *Join3[A, B, C]) Join[D any](rel **D) *Join4[A, B, C, D]
+ant: func (j *Join3[A, B, C]) LeftJoinMany[D any](rel *[]D) *Join4[A, B, C, D]
+ant: func (j *Join3[A, B, C]) LeftJoinOn[D any](on ...Cond) *Join4[A, B, C, D]
+ant: func (j *Join3[A, B, C]) LeftJoin[D any](rel **D) *Join4[A, B, C, D]
+ant: func (j *Join3[A, B, C]) Limit(limit int) *Join3[A, B, C]
+ant: func (j *Join3[A, B, C]) Offset(offset int) *Join3[A, B, C]
+ant: func (j *Join3[A, B, C]) Order(terms ...Sort) *Join3[A, B, C]
+ant: func (j *Join3[A, B, C]) OrderByDesc[V Ordered](field *V) *Join3[A, B, C]
+ant: func (j *Join3[A, B, C]) OrderBy[V Ordered](field *V) *Join3[A, B, C]
+ant: func (j *Join3[A, B, C]) Select[R any](f func(*A, *B, *C) R) *Projection[R]
+ant: func (j *Join3[A, B, C]) Where(c ...Cond) *Join3[A, B, C]
+ant: func (j *Join4[A, B, C, D]) Distinct() *Join4[A, B, C, D]
+ant: func (j *Join4[A, B, C, D]) GroupByExpr[V any](e Expr[V]) *Grouped
+ant: func (j *Join4[A, B, C, D]) GroupBy[V any](field *V) *Grouped
+ant: func (j *Join4[A, B, C, D]) Limit(limit int) *Join4[A, B, C, D]
+ant: func (j *Join4[A, B, C, D]) Offset(offset int) *Join4[A, B, C, D]
+ant: func (j *Join4[A, B, C, D]) Order(terms ...Sort) *Join4[A, B, C, D]
+ant: func (j *Join4[A, B, C, D]) OrderByDesc[V Ordered](field *V) *Join4[A, B, C, D]
+ant: func (j *Join4[A, B, C, D]) OrderBy[V Ordered](field *V) *Join4[A, B, C, D]
+ant: func (j *Join4[A, B, C, D]) Select[R any](f func(*A, *B, *C, *D) R) *Projection[R]
+ant: func (j *Join4[A, B, C, D]) Where(c ...Cond) *Join4[A, B, C, D]
+ant: func (j JSON[V]) ColumnType(dialect string) string
+ant: func (j JSON[V]) MarshalJSON() ([]byte, error)
+ant: func (j JSON[V]) Value() (driver.Value, error)
+ant: func (k *ForeignKeyBuilder) Name(name string) *ForeignKeyBuilder
+ant: func (k *ForeignKeyBuilder) NoIndex() *ForeignKeyBuilder
+ant: func (k *ForeignKeyBuilder) OnDelete(action Action) *ForeignKeyBuilder
+ant: func (k *ForeignKeyBuilder) OnUpdate(action Action) *ForeignKeyBuilder
+ant: func (k *ForeignKeyBuilder) References(fields ...FieldRef) *ForeignKeyBuilder
+ant: func (k *KeyBuilder) NotGenerated() *KeyBuilder
+ant: func (m *Merger[T]) Delete() *Merger[T]
+ant: func (m *Merger[T]) Exec(ctx context.Context) (int64, error)
+ant: func (m *Merger[T]) WhenMatched(set ...Assignment) *Merger[T]
+ant: func (m *Merger[T]) WhenMatchedIf(c Cond, set ...Assignment) *Merger[T]
+ant: func (m *Merger[T]) WhenNotMatched(insert ...Mapping) *Merger[T]
+ant: func (m *Mixin) Check(name, expr string)
+ant: func (m *Mixin) Eq(column string, value any) Cond
+ant: func (m *Mixin) Filter(name string, filter func(context.Context) Cond)
+ant: func (m *Mixin) Index(columns ...string) *IndexBuilder
+ant: func (m *Mixin) Table() string
+ant: func (m *ModelConvention) Fields() []*FieldConvention
+ant: func (m *ModelConvention) Name() string
+ant: func (m *ModelConvention) SetTable(name string)
+ant: func (m *ModelConvention) Table() string
+ant: func (p *Page[T]) HasNext() bool
+ant: func (p *Page[T]) Pages() int
+ant: func (p *Projection[R]) All(ctx context.Context) (out []R, err error)
+ant: func (p *Projection[R]) Each(ctx context.Context) iter.Seq2[R, error]
+ant: func (p *Projection[R]) First(ctx context.Context) (*R, error)
+ant: func (q *Query[T]) After(ctx context.Context, cursor string, size int) (*CursorPage[T], error)
+ant: func (q *Query[T]) All(ctx context.Context) ([]*T, error)
+ant: func (q *Query[T]) Chunk(ctx context.Context, size int, f func([]*T) error) error
+ant: func (q *Query[T]) ChunkByKey(ctx context.Context, size int, f func([]*T) error) error
+ant: func (q *Query[T]) ClearOrder() *Query[T]
+ant: func (q *Query[T]) Column[V any](field *V) *Query[T]
+ant: func (q *Query[T]) Count(ctx context.Context) (int64, error)
+ant: func (q *Query[T]) CrossJoin[J any]() *Join2[T, J]
+ant: func (q *Query[T]) Debug() *Query[T]
+ant: func (q *Query[T]) Delete(ctx context.Context) (int64, error)
+ant: func (q *Query[T]) DeleteReturning(ctx context.Context) ([]*T, error)
+ant: func (q *Query[T]) DeleteSQL(ctx context.Context) (string, []any, error)
+ant: func (q *Query[T]) Distinct() *Query[T]
+ant: func (q *Query[T]) DoesNotExist(ctx context.Context) (bool, error)
+ant: func (q *Query[T]) Each(ctx context.Context) iter.Seq2[T, error]
+ant: func (q *Query[T]) Except(other *Query[T]) *Query[T]
+ant: func (q *Query[T]) Exists(ctx context.Context) (bool, error)
+ant: func (q *Query[T]) Explain(ctx context.Context) (string, error)
+ant: func (q *Query[T]) Find[K comparable](ctx context.Context, key K) (*T, error)
+ant: func (q *Query[T]) First(ctx context.Context) (*T, error)
+ant: func (q *Query[T]) ForShare() *Query[T]
+ant: func (q *Query[T]) ForUpdate() *Query[T]
+ant: func (q *Query[T]) ForceDelete(ctx context.Context) (int64, error)
+ant: func (q *Query[T]) From(sub *Query[T]) *Query[T]
+ant: func (q *Query[T]) FromCTE(name string, sub *Query[T]) *Query[T]
+ant: func (q *Query[T]) FullJoinOn[J any](on ...Cond) *Join2[T, J]
+ant: func (q *Query[T]) GroupByExpr[V any](e Expr[V]) *Grouped
+ant: func (q *Query[T]) GroupBy[V any](field *V) *Grouped
+ant: func (q *Query[T]) Hint(hint string) *Query[T]
+ant: func (q *Query[T]) IgnoreFilters(names ...string) *Query[T]
+ant: func (q *Query[T]) IncludeJoined[R any](rel **R) *Query[T]
+ant: func (q *Query[T]) IncludeOne[R any](rel **R, shape ...func(*Query[R]) *Query[R]) *Query[T]
+ant: func (q *Query[T]) Include[R any](rel *[]R, shape ...func(*Query[R]) *Query[R]) *Query[T]
+ant: func (q *Query[T]) Intersect(other *Query[T]) *Query[T]
+ant: func (q *Query[T]) JoinMany[J any](rel *[]J) *Join2[T, J]
+ant: func (q *Query[T]) JoinOn[J any](on ...Cond) *Join2[T, J]
+ant: func (q *Query[T]) JoinUsing[J, V any](field *V) *Join2[T, J]
+ant: func (q *Query[T]) Join[J any](rel **J) *Join2[T, J]
+ant: func (q *Query[T]) Latest(field *time.Time) *Query[T]
+ant: func (q *Query[T]) LeftJoinMany[J any](rel *[]J) *Join2[T, J]
+ant: func (q *Query[T]) LeftJoinOn[J any](on ...Cond) *Join2[T, J]
+ant: func (q *Query[T]) LeftJoin[J any](rel **J) *Join2[T, J]
+ant: func (q *Query[T]) Limit(n int) *Query[T]
+ant: func (q *Query[T]) NoTracking() *Query[T]
+ant: func (q *Query[T]) NoTrackingResolved() *Query[T]
+ant: func (q *Query[T]) NoWait() *Query[T]
+ant: func (q *Query[T]) Offset(n int) *Query[T]
+ant: func (q *Query[T]) Oldest(field *time.Time) *Query[T]
+ant: func (q *Query[T]) Omit[V any](field *V) *Query[T]
+ant: func (q *Query[T]) OnlyDeleted() *Query[T]
+ant: func (q *Query[T]) Order(terms ...Sort) *Query[T]
+ant: func (q *Query[T]) OrderByDesc[V Ordered](field *V) *Query[T]
+ant: func (q *Query[T]) OrderByRandom() *Query[T]
+ant: func (q *Query[T]) OrderBy[V Ordered](field *V) *Query[T]
+ant: func (q *Query[T]) Page(ctx context.Context, number, size int) (*Page[T], error)
+ant: func (q *Query[T]) Recursive(rel *[]T) *Query[T]
+ant: func (q *Query[T]) RecursiveOne(rel **T) *Query[T]
+ant: func (q *Query[T]) Restore(ctx context.Context) (int64, error)
+ant: func (q *Query[T]) RightJoinOn[J any](on ...Cond) *Join2[T, J]
+ant: func (q *Query[T]) Scope(scopes ...func(*Query[T]) *Query[T]) *Query[T]
+ant: func (q *Query[T]) Single(ctx context.Context) (*T, error)
+ant: func (q *Query[T]) SkipLocked() *Query[T]
+ant: func (q *Query[T]) Tag(name string) *Query[T]
+ant: func (q *Query[T]) ThenByDesc[V Ordered](field *V) *Query[T]
+ant: func (q *Query[T]) ThenBy[V Ordered](field *V) *Query[T]
+ant: func (q *Query[T]) ToSQL() (string, []any, error)
+ant: func (q *Query[T]) ToSQLContext(ctx context.Context) (string, []any, error)
+ant: func (q *Query[T]) Unfiltered() *Query[T]
+ant: func (q *Query[T]) Union(other *Query[T]) *Query[T]
+ant: func (q *Query[T]) UnionAll(other *Query[T]) *Query[T]
+ant: func (q *Query[T]) Update(ctx context.Context, a ...Assignment) (int64, error)
+ant: func (q *Query[T]) UpdateReturning(ctx context.Context, a ...Assignment) ([]*T, error)
+ant: func (q *Query[T]) UpdateSQL(ctx context.Context, set ...Assignment) (string, []any, error)
+ant: func (q *Query[T]) When(ok bool, f func(*Query[T]) *Query[T]) *Query[T]
+ant: func (q *Query[T]) Where(c ...Cond) *Query[T]
+ant: func (q *Query[T]) WithDeleted() *Query[T]
+ant: func (q *Query[T]) With[V any](field *V, value Expr[V]) *Query[T]
+ant: func (r *RawQuery[T]) All(ctx context.Context) ([]T, error)
+ant: func (r *RawQuery[T]) Exec(ctx context.Context) (int64, error)
+ant: func (r *RawQuery[T]) First(ctx context.Context) (*T, error)
+ant: func (r *RelationBuilder) ConstraintName(name string) *RelationBuilder
+ant: func (r *RelationBuilder) ForeignKey[V any](field *V) *RelationBuilder
+ant: func (r *RelationBuilder) Inverse[P any](back **P) *RelationBuilder
+ant: func (r *RelationBuilder) Latest[V Ordered](field *V) *RelationBuilder
+ant: func (r *RelationBuilder) Morph[V comparable](field *V, value V) *RelationBuilder
+ant: func (r *RelationBuilder) NoForeignKey() *RelationBuilder
+ant: func (r *RelationBuilder) NoIndex() *RelationBuilder
+ant: func (r *RelationBuilder) Oldest[V Ordered](field *V) *RelationBuilder
+ant: func (r *RelationBuilder) OnDelete(action Action) *RelationBuilder
+ant: func (r *RelationBuilder) OnUpdate(action Action) *RelationBuilder
+ant: func (r *RelationBuilder) PivotColumns(local, foreign string) *RelationBuilder
+ant: func (r *RelationBuilder) References[V any](field *V) *RelationBuilder
+ant: func (r *RelationBuilder) Through(table string) *RelationBuilder
+ant: func (r *RelationBuilder) Touch() *RelationBuilder
+ant: func (r *RelationBuilder) Where(conds ...Cond) *RelationBuilder
+ant: func (s Sort) NullsFirst() Sort
+ant: func (s Sort) NullsLast() Sort
+ant: func (s Sub[V]) Expr() Expr[V]
+ant: func (t *Table[T]) All(ctx context.Context) ([]*T, error)
+ant: func (t *Table[T]) Column[V any](field *V) *Query[T]
+ant: func (t *Table[T]) Count(ctx context.Context) (int64, error)
+ant: func (t *Table[T]) CrossJoin[J any]() *Join2[T, J]
+ant: func (t *Table[T]) DeleteByID[K comparable](ctx context.Context, key K) error
+ant: func (t *Table[T]) Distinct() *Query[T]
+ant: func (t *Table[T]) Each(ctx context.Context) iter.Seq2[T, error]
+ant: func (t *Table[T]) Exists(ctx context.Context) (bool, error)
+ant: func (t *Table[T]) FindKey(ctx context.Context, parts ...any) (*T, error)
+ant: func (t *Table[T]) Find[K comparable](ctx context.Context, key K) (*T, error)
+ant: func (t *Table[T]) First(ctx context.Context) (*T, error)
+ant: func (t *Table[T]) FirstOrCreate(ctx context.Context, e *T, conds ...Cond) (*T, bool, error)
+ant: func (t *Table[T]) FirstOrNew(ctx context.Context, e *T, conds ...Cond) (*T, bool, error)
+ant: func (t *Table[T]) FullJoinOn[J any](on ...Cond) *Join2[T, J]
+ant: func (t *Table[T]) GroupByExpr[V any](e Expr[V]) *Grouped
+ant: func (t *Table[T]) GroupBy[V any](field *V) *Grouped
+ant: func (t *Table[T]) IgnoreFilters(names ...string) *Query[T]
+ant: func (t *Table[T]) IncludeJoined[R any](rel **R) *Query[T]
+ant: func (t *Table[T]) IncludeOne[R any](rel **R, shape ...func(*Query[R]) *Query[R]) *Query[T]
+ant: func (t *Table[T]) Include[R any](rel *[]R, shape ...func(*Query[R]) *Query[R]) *Query[T]
+ant: func (t *Table[T]) Insert(ctx context.Context, entities ...*T) error
+ant: func (t *Table[T]) InsertFrom(ctx context.Context, rows *Projection[T]) (int64, error)
+ant: func (t *Table[T]) InsertMany(ctx context.Context, entities []*T, options ...InsertOption) (int64, error)
+ant: func (t *Table[T]) InsertOnly(ctx context.Context, entities ...*T) error
+ant: func (t *Table[T]) JoinMany[J any](rel *[]J) *Join2[T, J]
+ant: func (t *Table[T]) JoinOn[J any](on ...Cond) *Join2[T, J]
+ant: func (t *Table[T]) Join[J any](rel **J) *Join2[T, J]
+ant: func (t *Table[T]) LeftJoinMany[J any](rel *[]J) *Join2[T, J]
+ant: func (t *Table[T]) LeftJoinOn[J any](on ...Cond) *Join2[T, J]
+ant: func (t *Table[T]) LeftJoin[J any](rel **J) *Join2[T, J]
+ant: func (t *Table[T]) Limit(n int) *Query[T]
+ant: func (t *Table[T]) LoadMissing[R any](ctx context.Context, rel *[]R, entities ...*T) error
+ant: func (t *Table[T]) LoadOne[R any](ctx context.Context, rel **R, entities ...*T) error
+ant: func (t *Table[T]) Load[R any](ctx context.Context, rel *[]R, entities ...*T) error
+ant: func (t *Table[T]) NoTracking() *Query[T]
+ant: func (t *Table[T]) Offset(n int) *Query[T]
+ant: func (t *Table[T]) Omit[V any](field *V) *Query[T]
+ant: func (t *Table[T]) OnlyDeleted() *Query[T]
+ant: func (t *Table[T]) Order(terms ...Sort) *Query[T]
+ant: func (t *Table[T]) OrderByDesc[V Ordered](field *V) *Query[T]
+ant: func (t *Table[T]) OrderBy[V Ordered](field *V) *Query[T]
+ant: func (t *Table[T]) Prune(ctx context.Context, conds ...Cond) (int64, error)
+ant: func (t *Table[T]) Query() *Query[T]
+ant: func (t *Table[T]) Reload(ctx context.Context, e *T) error
+ant: func (t *Table[T]) RightJoinOn[J any](on ...Cond) *Join2[T, J]
+ant: func (t *Table[T]) Scope(scopes ...func(*Query[T]) *Query[T]) *Query[T]
+ant: func (t *Table[T]) Single(ctx context.Context) (*T, error)
+ant: func (t *Table[T]) Truncate(ctx context.Context) error
+ant: func (t *Table[T]) Unfiltered() *Query[T]
+ant: func (t *Table[T]) UpdateMany(ctx context.Context, entities []*T, fields ...FieldRef) (int64, error)
+ant: func (t *Table[T]) Upsert(ctx context.Context, e *T, conflict *Conflict) (bool, error)
+ant: func (t *Table[T]) Where(c ...Cond) *Query[T]
+ant: func (t *Table[T]) WithDeleted() *Query[T]
+ant: func (t *Table[T]) With[V any](field *V, value Expr[V]) *Query[T]
+ant: func (w Window) OrderBy(terms ...Sort) Window
+ant: func (w Window) PartitionBy(exprs ...exprNode) Window
+ant: func Add[T any](h Handle, entity *T) error
+ant: func AllOf[V comparable](v V, fields ...*V) Cond
+ant: func And(conds ...Cond) Cond
+ant: func AnyOf[V comparable](v V, fields ...*V) Cond
+ant: func Attach[T any](h Handle, entity *T) error
+ant: func Attempts(n int) TxOption
+ant: func AvgOf[T any, V Number](ctx context.Context, q *Query[T], field *V) (float64, error)
+ant: func AvgRelated[R any, V Number](rel *[]R, field *V, conds ...Cond) Expr[sql.Null[float64]]
+ant: func Avg[V Number](field *V) Expr[float64]
+ant: func BatchSize(n int) InsertOption
+ant: func Begin[DB any](ctx context.Context, db *DB, options ...TxOption) (*DB, error)
+ant: func Between[V Ordered](field *V, low, high V) Cond
+ant: func Case[V any]() CaseExpr[V]
+ant: func Clone[T any](entity *T) *T
+ant: func Coalesce[V any](field *V, fallback V) Expr[V]
+ant: func Col[V any](field *V) Expr[V]
+ant: func Collate[V ~string](field *V, collation string) Expr[V]
+ant: func Count() Expr[int64]
+ant: func CountDistinct[V any](field *V) Expr[int64]
+ant: func CountOf[V any](field *V) Expr[int64]
+ant: func CountRelated[R any](rel *[]R, conds ...Cond) Expr[int64]
+ant: func CurrentTx(h Handle) *sql.Tx
+ant: func DatePart(field *time.Time, part string) Expr[float64]
+ant: func Dec[V Number](field *V, n V) Assignment
+ant: func DenseRank() Expr[int64]
+ant: func Detach[T any](h Handle, entity *T)
+ant: func DryRun[DB any](ctx context.Context, db *DB, fn func(tx *DB) error) ([]Statement, error)
+ant: func Entry[T any](h Handle, entity *T) *EntityEntry[T]
+ant: func EqCol[V comparable](a, b *V) Cond
+ant: func Eq[V comparable](field *V, v V) Cond
+ant: func Exists(q Selectable) Cond
+ant: func F[V any](field *V) FieldRef
+ant: func FailedCond(err error) Cond
+ant: func FailedExpr[V any](err error) Expr[V]
+ant: func FailedSQL(err error) string
+ant: func Fields[T any]() *T
+ant: func FromFunc[T any](h Handle, call string, args ...any) *Query[T]
+ant: func FromRaw[T any](h Handle, text string, args ...any) *Query[T]
+ant: func Func[R any](name string, args ...any) Expr[R]
+ant: func Future(field *time.Time) Cond
+ant: func GenerateKey[E, V any](b *ModelBuilder[E], field *V, fn func() V)
+ant: func Gt[V Ordered](field *V, v V) Cond
+ant: func Gte[V Ordered](field *V, v V) Cond
+ant: func HasNone[R any](rel *[]R, conds ...Cond) Cond
+ant: func HasOne[R any](rel **R, conds ...Cond) Cond
+ant: func Has[R any](rel *[]R, conds ...Cond) Cond
+ant: func ILike[V ~string](field *V, pattern V) Cond
+ant: func InSub[V any](field *V, sub Sub[V]) Cond
+ant: func InTuples(fields []FieldRef, tuples ...[]any) Cond
+ant: func In[V comparable](field *V, values ...V) Cond
+ant: func Inc[V Number](field *V, n V) Assignment
+ant: func IncrementBy(n int64) SequenceOption
+ant: func IntoExpr[V any](dst *V, src Expr[V]) Mapping
+ant: func Into[V any](dst *V, src *V) Mapping
+ant: func IsCheckViolation(err error) bool
+ant: func IsDirty[T, V any](e *EntityEntry[T], field *V) bool
+ant: func IsForeignKeyViolation(err error) bool
+ant: func IsNotNullViolation(err error) bool
+ant: func IsNotNull[V any](field *V) Cond
+ant: func IsNull[V any](field *V) Cond
+ant: func IsRetryable(err error) bool
+ant: func IsUniqueViolation(err error) bool
+ant: func Isolation(level sql.IsolationLevel) TxOption
+ant: func JoinLateral[T, J any](q *Query[T], sub *Query[J], on ...Cond) *Join2[T, J]
+ant: func JoinSub[T, J any](q *Query[T], sub *Query[J], on ...Cond) *Join2[T, J]
+ant: func Lag[V any](field *V) Expr[sql.Null[V]]
+ant: func Lead[V any](field *V) Expr[sql.Null[V]]
+ant: func LeftJoinLateral[T, J any](q *Query[T], sub *Query[J], on ...Cond) *Join2[T, J]
+ant: func LeftJoinSub[T, J any](q *Query[T], sub *Query[J], on ...Cond) *Join2[T, J]
+ant: func Length[V ~string](field *V) Expr[int]
+ant: func Like[V ~string](field *V, pattern V) Cond
+ant: func Link[T, R any](ctx context.Context, h Handle, owner *T, rel *[]R, targets ...*R) error
+ant: func LogValues() LogOption
+ant: func Lower[V ~string](field *V) Expr[V]
+ant: func Lt[V Ordered](field *V, v V) Cond
+ant: func Lte[V Ordered](field *V, v V) Cond
+ant: func MarkModified[T any](h Handle, entity *T) error
+ant: func MaxOf[T any, V Ordered](ctx context.Context, q *Query[T], field *V) (V, error)
+ant: func MaxRelated[R any, V Ordered](rel *[]R, field *V, conds ...Cond) Expr[sql.Null[V]]
+ant: func Max[V Ordered](field *V) Expr[V]
+ant: func Merge[T, S any](t *Table[T], source *Query[S], on ...Cond) *Merger[T]
+ant: func MinOf[T any, V Ordered](ctx context.Context, q *Query[T], field *V) (V, error)
+ant: func MinRelated[R any, V Ordered](rel *[]R, field *V, conds ...Cond) Expr[sql.Null[V]]
+ant: func Min[V Ordered](field *V) Expr[V]
+ant: func Ne[V comparable](field *V, v V) Cond
+ant: func NoneOf[V comparable](v V, fields ...*V) Cond
+ant: func Not(c Cond) Cond
+ant: func NotExists(q Selectable) Cond
+ant: func NotInSub[V any](field *V, sub Sub[V]) Cond
+ant: func NotIn[V comparable](field *V, values ...V) Cond
+ant: func Observe[T any](h Handle, o Observer[T]) error
+ant: func OnConflict[V any](field *V) *Conflict
+ant: func OnPrimary(ctx context.Context) context.Context
+ant: func Open[DB any](ctx context.Context, d dialect.Dialect, dsn string, options ...Option) (*DB, error)
+ant: func Or(conds ...Cond) Cond
+ant: func OrderedBy(terms ...Sort) Window
+ant: func Original[T, V any](e *EntityEntry[T], field *V) (V, error)
+ant: func PartitionBy[V any](field *V) Window
+ant: func Past(field *time.Time) Cond
+ant: func Pluck[T, V any](ctx context.Context, q *Query[T], field *V) ([]V, error)
+ant: func Pointers[T any](values []T) []*T
+ant: func PrepareBulk[T any](h Handle, entities []*T) (*BulkRows, error)
+ant: func Project[R any](q Selectable, mappings ...Mapping) *Projection[R]
+ant: func Rank() Expr[int64]
+ant: func RawFile[T any](h Handle, fsys fs.FS, name string, args ...any) *RawQuery[T]
+ant: func Raw[T any](h Handle, query string, args ...any) *RawQuery[T]
+ant: func ReadOnly() TxOption
+ant: func RelatedOne[T, R any](h Handle, entity *T, rel **R) *Query[R]
+ant: func Related[T, R any](h Handle, entity *T, rel *[]R) *Query[R]
+ant: func Remove[T any](h Handle, entity *T) error
+ant: func RowNumber() Expr[int64]
+ant: func SQLCond(text string, args ...any) Cond
+ant: func SQLState(err error) string
+ant: func SQL[V any](text string, args ...any) Expr[V]
+ant: func SchemaOf[DB any](d dialect.Dialect) (*schema.Schema, error)
+ant: func Session[DB any](db *DB, options ...Option) *DB
+ant: func SetExpr[V any](field *V, value Expr[V]) Assignment
+ant: func Set[V any](field *V, v V) Assignment
+ant: func SlowThreshold(d time.Duration) LogOption
+ant: func StartAt(n int64) SequenceOption
+ant: func SubExpr[V any](q Selectable, value Expr[V]) Sub[V]
+ant: func SubOf[V any](q Selectable, field *V) Sub[V]
+ant: func SumOf[T any, V Number](ctx context.Context, q *Query[T], field *V) (V, error)
+ant: func SumRelated[R any, V Number](rel *[]R, field *V, conds ...Cond) Expr[V]
+ant: func Sum[V Number](field *V) Expr[V]
+ant: func SyncLinks[T, R any](ctx context.Context, h Handle, owner *T, rel *[]R, targets ...*R) error
+ant: func TableOf[T any]() (schemaName, table string, err error)
+ant: func Then[V any](g *Grouped, field *V) *Grouped
+ant: func Today(field *time.Time) Cond
+ant: func Toggle[T, R any](ctx context.Context, h Handle, owner *T, rel *[]R, targets ...*R) error
+ant: func TrackGraph[T any](h Handle, root *T, decide func(GraphNode) State) error
+ant: func Tracked[T any](h Handle) []*T
+ant: func Unlink[T, R any](ctx context.Context, h Handle, owner *T, rel *[]R, targets ...*R) error
+ant: func Upper[V ~string](field *V) Expr[V]
+ant: func UseConn[DB any](db *DB, conn *sql.Conn) (*DB, error)
+ant: func UseTx[DB any](db *DB, tx *sql.Tx) (*DB, error)
+ant: func Values[T any](h Handle, rows ...T) *Query[T]
+ant: func Watch(ctx context.Context) context.Context
+ant: func WithConflict(c *Conflict) InsertOption
+ant: func WithConvention(rule func(*ModelConvention)) Option
+ant: func WithDetailedErrors() Option
+ant: func WithDiagnostics(d Diagnostics) Option
+ant: func WithEvents(e Events) Option
+ant: func WithInterceptor(i Interceptor) Option
+ant: func WithLogger(logger *slog.Logger, options ...LogOption) Option
+ant: func WithLooseScan() Option
+ant: func WithNaming(naming Naming) Option
+ant: func WithNow(now func() time.Time) Option
+ant: func WithReplicas(pools ...*sql.DB) Option
+ant: func WithRetry(policy Retry) Option
+ant: func WithStickyWrites(d time.Duration) Option
+ant: func WithStrict() Option
+ant: func WithTracking(on bool) Option
+ant: func WithoutAutoTx() Option
+ant: func WithoutHooks(ctx context.Context) context.Context
+ant: func Wrap[DB any](d dialect.Dialect, pool *sql.DB, options ...Option) (*DB, error)
+ant: type Action
+ant: type AfterDeleter
+ant: type AfterIncluder
+ant: type AfterInserter
+ant: type AfterLoader
+ant: type AfterUpdater
+ant: type Alert
+ant: type Assignment
+ant: type Base
+ant: type BeforeDeleter
+ant: type BeforeInserter
+ant: type BeforeUpdater
+ant: type BulkRows
+ant: type CaseExpr
+ant: type Change
+ant: type ColumnBuilder
+ant: type ConcurrencyError
+ant: type Cond
+ant: type Conflict
+ant: type Context
+ant: type CursorPage
+ant: type DeletedAt
+ant: type Diagnostics
+ant: type Entity
+ant: type EntityEntry
+ant: type Events
+ant: type Expr
+ant: type FieldConvention
+ant: type FieldRef
+ant: type ForeignKeyBuilder
+ant: type Gob
+ant: type GraphNode
+ant: type Grouped
+ant: type Handle
+ant: type IndexBuilder
+ant: type InsertOption
+ant: type Interceptor
+ant: type JSON
+ant: type Join2
+ant: type Join3
+ant: type Join4
+ant: type KeyBuilder
+ant: type LogOption
+ant: type Mapping
+ant: type Merger
+ant: type Mixin
+ant: type MixinConfigurer
+ant: type ModelBuilder
+ant: type ModelConvention
+ant: type Naming
+ant: type Number
+ant: type Observer
+ant: type Option
+ant: type Ordered
+ant: type Outcome
+ant: type Page
+ant: type Projection
+ant: type Query
+ant: type RawQuery
+ant: type RelationBuilder
+ant: type Retry
+ant: type SaveInterceptor
+ant: type Selectable
+ant: type SequenceOption
+ant: type Sort
+ant: type State
+ant: type Statement
+ant: type Sub
+ant: type Table
+ant: type TxOption
+ant: type UnixTime
+ant: type ValidationError
+ant: type Validator
+ant: type Window
+ant: var ErrBadSchema
+ant: var ErrConcurrency
+ant: var ErrCursor
+ant: var ErrCycle
+ant: var ErrIncludeInEach
+ant: var ErrIncludeInSubquery
+ant: var ErrKeyChanged
+ant: var ErrKeyType
+ant: var ErrMultipleRows
+ant: var ErrNilEntity
+ant: var ErrNoAssignment
+ant: var ErrNoColumnType
+ant: var ErrNoColumns
+ant: var ErrNoCondition
+ant: var ErrNoContext
+ant: var ErrNoForeignKey
+ant: var ErrNoKey
+ant: var ErrNoRows
+ant: var ErrNotColumn
+ant: var ErrNotFound
+ant: var ErrNotImplemented
+ant: var ErrNotInTx
+ant: var ErrNotManyToMany
+ant: var ErrNotOpen
+ant: var ErrNotProbe
+ant: var ErrNotRelation
+ant: var ErrNotSoftDeleted
+ant: var ErrNotTracked
+ant: var ErrReadOnly
+ant: var ErrThenWithoutOrder
+ant: var ErrTxDone
+ant: var ErrTxType
+ant: var ErrUnknownColumn
+ant: var ErrUnsupported
+ant: var ErrWrongModel
+anttest: func (f *Factory[T]) AfterBuild(fn func(*T)) *Factory[T]
+anttest: func (f *Factory[T]) AfterCreate(fn func(*T)) *Factory[T]
+anttest: func (f *Factory[T]) Build(overrides ...func(*T)) *T
+anttest: func (f *Factory[T]) BuildMany(n int, overrides ...func(*T)) []*T
+anttest: func (f *Factory[T]) Create(t testing.TB, table *ant.Table[T], overrides ...func(*T)) *T
+anttest: func (f *Factory[T]) CreateMany(t testing.TB, table *ant.Table[T], n int, overrides ...func(*T)) []*T
+anttest: func (f *Factory[T]) With(overrides ...func(*T)) *Factory[T]
+anttest: func (r *Recycled[T]) Get(t testing.TB) *T
+anttest: func Isolate[DB any](t testing.TB, db *DB) *DB
+anttest: func Load[DB any](t testing.TB, db *DB, fsys fs.FS, files ...string)
+anttest: func NewFactory[T any](make func(n int) *T) *Factory[T]
+anttest: func Recycle[T any](f *Factory[T], table *ant.Table[T]) *Recycled[T]
+anttest: type Factory
+anttest: type Recycled
+dialect: const ConflictWhere
+dialect: const DateCast
+dialect: const DatePart
+dialect: const DefaultKeyword
+dialect: const FullJoin
+dialect: const LateralJoin
+dialect: const Merge
+dialect: const OnConflict
+dialect: const ReturningDelete
+dialect: const ReturningInsert
+dialect: const ReturningUpdate
+dialect: const RowLocks
+dialect: const ShareLocks
+dialect: func (s *Syntax) Lacks(f Feature) bool
+dialect: func (s *Syntax) ParameterLimit() int
+dialect: func (s *Syntax) SavepointCommands() (save, rollback, release string)
+dialect: func Bind(d Dialect, query string, args []any) (string, []any, error)
+dialect: func Numbered(prefix string, n int) string
+dialect: func QuoteWith(ident, open, close string) string
+dialect: func RegisterErrors(state func(error) string)
+dialect: func Render(d Dialect, stmt qb.Statement) (string, []any, error)
+dialect: func StateOf(err error) string
+dialect: func Supports(d Dialect, f Feature) bool
+dialect: func SyntaxOf(d Dialect) *Syntax
+dialect: type Dialect
+dialect: type Feature
+dialect: type Syntactic
+dialect: type Syntax
+dialect/postgres: func (Point) ColumnType(string) string
+dialect/postgres: func (Vector) ColumnType(string) string
+dialect/postgres: func (a *Array[V]) Scan(src any) error
+dialect/postgres: func (a Array[V]) ColumnType(string) string
+dialect/postgres: func (a Array[V]) Value() (driver.Value, error)
+dialect/postgres: func (p *Partitions) DropBefore(ctx context.Context, cutoff time.Time) ([]string, error)
+dialect/postgres: func (p *Partitions) Ensure(ctx context.Context, from time.Time, monthsAhead int) ([]string, error)
+dialect/postgres: func (p *Partitions) List(ctx context.Context) ([]Partition, error)
+dialect/postgres: func (p *Point) Scan(src any) error
+dialect/postgres: func (p Point) Value() (driver.Value, error)
+dialect/postgres: func (v *Vector) Scan(src any) error
+dialect/postgres: func (v Vector) Value() (driver.Value, error)
+dialect/postgres: func CosineDistance(field *Vector, v Vector) ant.Expr[float64]
+dialect/postgres: func Distance(field *Point, p Point) ant.Expr[float64]
+dialect/postgres: func JSONContains[V any](field *V, value any) ant.Cond
+dialect/postgres: func JSONHasKey[V any](field *V, key string) ant.Cond
+dialect/postgres: func JSONLength[V any](field *V) ant.Expr[int]
+dialect/postgres: func JSONSet[V any](field *V, value any, path ...string) ant.Expr[V]
+dialect/postgres: func JSONText[V any](field *V, path ...string) ant.Expr[string]
+dialect/postgres: func L2Distance(field *Vector, v Vector) ant.Expr[float64]
+dialect/postgres: func Match[V ~string](field *V, config, query string) ant.Cond
+dialect/postgres: func MonthlyPartitions[T any](db Database) (*Partitions, error)
+dialect/postgres: func Near(field *Point, p Point, radius float64) ant.Cond
+dialect/postgres: type Array
+dialect/postgres: type Database
+dialect/postgres: type Partition
+dialect/postgres: type Partitions
+dialect/postgres: type Point
+dialect/postgres: type Vector
+dialect/postgres: var Dialect
+dialect/postgres/pgxext: func (b *Batch) Add(query string, args []any, err error) *Batch
+dialect/postgres/pgxext: func (b *Batch) Exec(query string, args ...any) *Batch
+dialect/postgres/pgxext: func (b *Batch) Len() int
+dialect/postgres/pgxext: func (b *Batch) Send(ctx context.Context, h Database) ([]int64, error)
+dialect/postgres/pgxext: func Copy[T any](ctx context.Context, h Database, entities []*T) (int64, error)
+dialect/postgres/pgxext: type Batch
+dialect/postgres/pgxext: type Database
+dialect/postgres/pgxext: var ErrNotPgx
+ids: func (s *Snowflake) Next() int64
+ids: func NewSnowflake(node int64) (*Snowflake, error)
+ids: func ULID() string
+ids: func UUID() string
+ids: type Snowflake
+metrics: func (m *Metrics) After(_ context.Context, s *ant.Statement, o ant.Outcome)
+metrics: func (m *Metrics) Before(ctx context.Context, _ *ant.Statement) (context.Context, error)
+metrics: func (m *Metrics) ServeHTTP(w http.ResponseWriter, _ *http.Request)
+metrics: func (m *Metrics) Snapshot() []Sample
+metrics: func (m *Metrics) WritePrometheus(w io.Writer)
+metrics: func New() *Metrics
+metrics: type Metrics
+metrics: type Sample
+migrate: const Absorbed
+migrate: const Changed
+migrate: const Done
+migrate: const Failed
+migrate: const Late
+migrate: const Missing
+migrate: const Outdated
+migrate: const Pending
+migrate: const Removed
+migrate: const Repeatable
+migrate: const Skipped
+migrate: const Superseded
+migrate: const Versioned
+migrate: func (m Migration) Checksum() string
+migrate: func (m Migration) ID() string
+migrate: func DefaultName(n Next) string
+migrate: func Dir(path string) Store
+migrate: func FS(fsys fs.FS) Source
+migrate: func Main[DB any](d dialect.Dialect, config ...Config)
+migrate: func NoTransaction(m *Migration)
+migrate: func Register[DB any](id string, fn func(ctx context.Context, tx *DB) error, options ...GoOption)
+migrate: func Run[DB any](ctx context.Context, d dialect.Dialect, args []string, config ...Config) error
+migrate: func Seed[DB any](name string, fn Seeder[DB])
+migrate: func Status[DB any](ctx context.Context, db *DB, config ...Config) ([]Entry, error)
+migrate: func Timestamped(n Next) string
+migrate: func Up[DB any](ctx context.Context, db *DB, config ...Config) error
+migrate: type Applied
+migrate: type Config
+migrate: type Entry
+migrate: type GoOption
+migrate: type Kind
+migrate: type Migration
+migrate: type Next
+migrate: type Seeder
+migrate: type Source
+migrate: type State
+migrate: type Store
+migrate: var ErrBadMigration
+migrate: var ErrBehindSquash
+migrate: var ErrChecksum
+migrate: var ErrDrift
+migrate: var ErrDuplicateVersion
+migrate: var ErrFailed
+migrate: var ErrMissing
+migrate: var ErrOutOfOrder
+migrate: var ErrPending
+migrate: var ErrPendingChanges
+migrate: var ErrReadOnly
+migrate: var ErrStaleSnapshot
+migrate: var ErrUnconfirmed
+qb: const CrossJoin
+qb: const FullJoin
+qb: const InnerJoin
+qb: const LeftJoin
+qb: const NullsDefault
+qb: const NullsFirst
+qb: const NullsLast
+qb: const OpEq
+qb: const OpGt
+qb: const OpGte
+qb: const OpILike
+qb: const OpLike
+qb: const OpLt
+qb: const OpLte
+qb: const OpNe
+qb: const RightJoin
+qb: func (Secret) LogValue() slog.Value
+qb: func (Secret) String() string
+qb: func (s Secret) Value() (driver.Value, error)
+qb: func Aliased(c Cond, table *TableRef, alias string) Cond
+qb: func MatchesAll(c Cond) bool
+qb: type And
+qb: type Assignment
+qb: type Between
+qb: type Binary
+qb: type CTE
+qb: type Case
+qb: type Cast
+qb: type Collate
+qb: type Column
+qb: type Compare
+qb: type Cond
+qb: type Conflict
+qb: type Contextual
+qb: type Default
+qb: type Delete
+qb: type Exists
+qb: type Expr
+qb: type Fragment
+qb: type Func
+qb: type In
+qb: type Insert
+qb: type IsNull
+qb: type Join
+qb: type JoinKind
+qb: type Lazy
+qb: type Lock
+qb: type Merge
+qb: type MergeAction
+qb: type Not
+qb: type NullsOrder
+qb: type Op
+qb: type Or
+qb: type Order
+qb: type Param
+qb: type Row
+qb: type Secret
+qb: type Select
+qb: type Selected
+qb: type SetOp
+qb: type Source
+qb: type Star
+qb: type Statement
+qb: type Subquery
+qb: type TableRef
+qb: type Update
+qb: type Values
+qb: type When
+qb: type Window
+schema: const Format
+schema: const Generated
+schema: const NoTransaction
+schema: func (c AddCheck) String() string
+schema: func (c AddCheck) Warning() string
+schema: func (c AddColumn) String() string
+schema: func (c AddColumn) Warning() string
+schema: func (c AddEnumValue) String() string
+schema: func (c AddForeignKey) String() string
+schema: func (c AddForeignKey) Warning() string
+schema: func (c AddPrimaryKey) String() string
+schema: func (c AddUnique) String() string
+schema: func (c AddUnique) Warning() string
+schema: func (c AlterColumn) String() string
+schema: func (c AlterColumn) Warning() string
+schema: func (c CreateEnum) String() string
+schema: func (c CreateIndex) RunsOnline() bool
+schema: func (c CreateIndex) String() string
+schema: func (c CreateIndex) Warning() string
+schema: func (c CreateSchema) String() string
+schema: func (c CreateSequence) String() string
+schema: func (c CreateTable) String() string
+schema: func (c DropColumn) String() string
+schema: func (c DropColumn) Warning() string
+schema: func (c DropConstraint) String() string
+schema: func (c DropEnum) String() string
+schema: func (c DropForeignKey) String() string
+schema: func (c DropIndex) RunsOnline() bool
+schema: func (c DropIndex) String() string
+schema: func (c DropPrimaryKey) String() string
+schema: func (c DropSequence) String() string
+schema: func (c DropTable) String() string
+schema: func (c DropTable) Warning() string
+schema: func (c RemoveEnumValue) String() string
+schema: func (c RemoveEnumValue) Warning() string
+schema: func (c RenameColumn) String() string
+schema: func (c RenameConstraint) String() string
+schema: func (c RenameIndex) String() string
+schema: func (c RenameTable) String() string
+schema: func (c SetColumnComment) String() string
+schema: func (c SetTableComment) String() string
+schema: func (h Hint) Change() Change
+schema: func (h Hint) Flag() string
+schema: func (h Hint) String() string
+schema: func (p *Plan) Empty() bool
+schema: func (p *Plan) Online() bool
+schema: func (p *Plan) Warnings() []string
+schema: func (r Ref) String() string
+schema: func (s *Schema) Clone() *Schema
+schema: func (s *Schema) Encode() ([]byte, error)
+schema: func (s *Schema) Enum(name string) *Enum
+schema: func (s *Schema) Sequence(name string) *Sequence
+schema: func (s *Schema) Sort()
+schema: func (s *Schema) Table(ref Ref) *Table
+schema: func (t *Table) Column(name string) *Column
+schema: func (t *Table) Ref() Ref
+schema: func Backfill(d Dialect, p *Plan)
+schema: func Decode(data []byte) (*Schema, error)
+schema: func Diff(from, to *Schema, renames ...string) (*Plan, error)
+schema: func ForeignKeyName(d Dialect, table string, columns ...string) string
+schema: func IndexName(d Dialect, table string, columns ...string) string
+schema: func Of(d any) (Dialect, error)
+schema: func PrimaryKeyName(d Dialect, table string) string
+schema: func Script(d Dialect, p *Plan) (string, error)
+schema: func Statements(d Dialect, p *Plan) ([]string, error)
+schema: func UniqueName(d Dialect, table string, columns ...string) string
+schema: type AddCheck
+schema: type AddColumn
+schema: type AddEnumValue
+schema: type AddForeignKey
+schema: type AddPrimaryKey
+schema: type AddUnique
+schema: type AlterColumn
+schema: type Change
+schema: type Check
+schema: type Column
+schema: type CreateEnum
+schema: type CreateIndex
+schema: type CreateSchema
+schema: type CreateSequence
+schema: type CreateTable
+schema: type Dialect
+schema: type DropColumn
+schema: type DropConstraint
+schema: type DropEnum
+schema: type DropForeignKey
+schema: type DropIndex
+schema: type DropPrimaryKey
+schema: type DropSequence
+schema: type DropTable
+schema: type Enum
+schema: type Facets
+schema: type Failure
+schema: type ForeignKey
+schema: type Hint
+schema: type Index
+schema: type IndexPart
+schema: type Key
+schema: type Online
+schema: type Partition
+schema: type Plan
+schema: type Querier
+schema: type Ref
+schema: type RemoveEnumValue
+schema: type RenameColumn
+schema: type RenameConstraint
+schema: type RenameIndex
+schema: type RenameTable
+schema: type Schema
+schema: type Sequence
+schema: type SetColumnComment
+schema: type SetTableComment
+schema: type Summary
+schema: type Table
+schema: type TableSummary
+schema: type Typed
+schema: var ErrNewerFormat
+schema: var ErrUnsupported
+secure: func (Value[V]) ColumnType(string) string
+secure: func (Value[V]) MarshalJSON() ([]byte, error)
+secure: func (Value[V]) String() string
+secure: func (s *Value[V]) Scan(src any) error
+secure: func (s Value[V]) Value() (driver.Value, error)
+secure: func NeedsRotation(stored string) bool
+secure: func New[V any](v V) Value[V]
+secure: func SetKeys(active string, keys map[string][]byte) error
+secure: type Value
+secure: var ErrNoKeys
+secure: var ErrUnknownKey
+validate: func All[V any](rules ...func(V) error) func(V) error
+validate: func Email(v string) error
+validate: func Matches(pattern *regexp.Regexp) func(string) error
+validate: func MaxLength(n int) func(string) error
+validate: func MinLength(n int) func(string) error
+validate: func OneOf[V comparable](allowed ...V) func(V) error
+validate: func Range[V cmp.Ordered](low, high V) func(V) error
+validate: func Required[V any]() func(V) error
+validate: var ErrRequired

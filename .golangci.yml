@@ -1,0 +1,34 @@
+version: "2"
+
+# Layout only. Run make fmt to fix everything here, and make lint to check it.
+# go vet and staticcheck look for bugs, and tools/antfmt spreads out the literals
+# these tools let through, because they only look at line length.
+linters:
+  default: none
+  enable:
+    - nlreturn
+    - wsl_v5
+  settings:
+    wsl_v5:
+      allow-first-in-block: false
+      enable:
+        - err
+  exclusions:
+    paths:
+      - testdata
+
+formatters:
+  enable:
+    - golines
+  settings:
+    golines:
+      max-len: 100
+      tab-len: 4
+      reformat-tags: false
+  exclusions:
+    paths:
+      - testdata
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,87 @@
+package writing
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/skudra-go/ant"
+	"github.com/skudra-go/ant/tests/features/fixture"
+)
+
+// A bulk write with no condition is refused, because a missing filter would
+// otherwise change the whole table. Unfiltered says it is on purpose.
+func TestNoConditionGuard(t *testing.T) {
+	fixture.Run(t, func(t *testing.T, db *fixture.AppDB) {
+		fixture.Seed(t, db)
+		ctx := t.Context()
+
+		assertUntouched := func(t *testing.T) {
+			t.Helper()
+
+			users, err := db.Users.All(ctx)
+			require.NoError(t, err)
+			require.Len(t, users, 3)
+		}
+
+		t.Run("no Where", func(t *testing.T) {
+			_, err := db.Users.OrderBy(&U.Name).Delete(ctx)
+			require.ErrorIs(t, err, ant.ErrNoCondition)
+			_, err = db.Users.Limit(1).Update(ctx, ant.Set(&U.Age, 0))
+			require.ErrorIs(t, err, ant.ErrNoCondition)
+			assertUntouched(t)
+		})
+
+		t.Run("an empty Where", func(t *testing.T) {
+			_, err := db.Users.Where().Delete(ctx)
+			require.ErrorIs(t, err, ant.ErrNoCondition)
+			assertUntouched(t)
+		})
+
+		// Conditions built from an empty list are the dangerous case: the code
+		// looks filtered, but nothing can exclude a row.
+		t.Run("conditions that cannot exclude a row", func(t *testing.T) {
+			var none []string
+			for name, cond := range map[string]ant.Cond{
+				"empty And":          ant.And(),
+				"empty NotIn":        ant.NotIn(&U.Name, none...),
+				"And of empties":     ant.And(ant.And(), ant.NotIn(&U.Name, none...)),
+				"Or with an empty":   ant.Or(ant.Eq(&U.Age, 1), ant.And()),
+				"Not of an empty Or": ant.Not(ant.Or()),
+			} {
+				t.Run(name, func(t *testing.T) {
+					_, err := db.Users.Where(cond).Delete(ctx)
+					require.ErrorIs(t, err, ant.ErrNoCondition)
+					assertUntouched(t)
+				})
+			}
+		})
+
+		t.Run("a condition that matches nothing is allowed", func(t *testing.T) {
+			var none []string
+
+			n, err := db.Users.Where(ant.In(&U.Name, none...)).Delete(ctx)
+			require.NoError(t, err)
+			require.Zero(t, n)
+		})
+
+		t.Run("a skipped When leaves the guard on", func(t *testing.T) {
+			_, err := db.Users.Limit(10).
+				When(false, func(q *ant.Query[fixture.User]) *ant.Query[fixture.User] {
+					return q.Where(ant.Eq(&U.Age, 1))
+				}).
+				Delete(ctx)
+			require.ErrorIs(t, err, ant.ErrNoCondition)
+		})
+
+		t.Run("Unfiltered allows it", func(t *testing.T) {
+			n, err := db.Users.Unfiltered().Update(ctx, ant.Set(&U.Age, 50))
+			require.NoError(t, err)
+			require.EqualValues(t, 3, n)
+
+			n, err = db.Users.Unfiltered().Delete(ctx)
+			require.NoError(t, err)
+			require.EqualValues(t, 3, n)
+		})
+	})
+}
