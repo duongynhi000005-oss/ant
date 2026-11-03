@@ -699,12 +699,22 @@ func (q *Query[T]) bulkTarget() ([]qb.Cond, error) {
 	return []qb.Cond{qb.In{Left: column, Sub: sub}}, nil
 }
 
-// selectsKey reports whether q's rows carry the model's stored key, so that a
-// bulk write on a source made from q can find the rows they came from.
-func (q *Query[T]) selectsKey() bool {
+// keyIndex returns the position of the model's stored key in q's selection, or
+// -1 if q's rows do not carry it, so that a bulk write on a source made from q
+// can find the rows they came from. A set operation matches columns by
+// position, so its sides must agree on it. A computed column under the key's
+// name would make it ambiguous.
+func (q *Query[T]) keyIndex() int {
 	key := q.model().Key()
 
-	return key != nil && slices.Contains(q.columns(), key) && (q.from == nil || q.fromKey)
+	switch {
+	case key == nil, q.from != nil && !q.fromKey:
+		return -1
+	case slices.ContainsFunc(q.computed, func(c qb.Selected) bool { return c.Alias == key.Column }):
+		return -1
+	}
+
+	return slices.Index(q.columns(), key)
 }
 
 // update returns the statement for Update.
@@ -943,7 +953,7 @@ func (q *Query[T]) From(sub *Query[T]) *Query[T] {
 	}
 
 	n.from = &qb.Source{Sub: sub.statement(sub.selection()), Alias: n.model().Table.Name}
-	n.fromKey = sub.selectsKey()
+	n.fromKey = sub.keyIndex() >= 0
 	n.fromFiltered = sub.narrowed()
 
 	return n
@@ -961,7 +971,7 @@ func (q *Query[T]) FromCTE(name string, sub *Query[T]) *Query[T] {
 
 	n.with = append(n.with, qb.CTE{Name: name, Select: sub.statement(sub.selection())})
 	n.from = &qb.Source{Name: name, Alias: n.model().Table.Name}
-	n.fromKey = sub.selectsKey()
+	n.fromKey = sub.keyIndex() >= 0
 	n.fromFiltered = sub.narrowed()
 
 	return n
@@ -998,7 +1008,7 @@ func (q *Query[T]) set(kind string, all bool, other *Query[T]) *Query[T] {
 	out := newQuery[T](q.state)
 	out.noTracking = q.noTracking
 	out.from = &qb.Source{Sub: combined, Alias: q.model().Table.Name}
-	out.fromKey = q.selectsKey() && other.selectsKey()
+	out.fromKey = q.keyIndex() >= 0 && q.keyIndex() == other.keyIndex()
 	out.fromFiltered = setFiltered(kind, q.narrowed(), other.narrowed())
 
 	return out
@@ -1087,7 +1097,7 @@ func recursive[T, V any](q *Query[T], rel *V) *Query[T] {
 	out.with = []qb.CTE{{Name: recursiveName, Select: seed}}
 	out.recursive = true
 	out.from = &qb.Source{Name: recursiveName, Alias: model.Table.Name}
-	out.fromKey = q.selectsKey()
+	out.fromKey = q.keyIndex() >= 0
 	out.fromFiltered = q.narrowed()
 
 	return out

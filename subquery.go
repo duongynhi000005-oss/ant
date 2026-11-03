@@ -3,6 +3,7 @@ package ant
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"unsafe"
 
 	"github.com/skudra-go/ant/internal/meta"
@@ -273,7 +274,7 @@ func Values[T any](h Handle, rows ...T) *Query[T] {
 	}
 
 	q.from = &qb.Source{Values: values, Alias: model.Table.Name}
-	q.fromKey = model.Key() != nil
+	q.fromKey = slices.Contains(fields, model.Key())
 
 	return q
 }

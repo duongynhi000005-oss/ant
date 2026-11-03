@@ -343,6 +343,15 @@ func TestConformanceDerivedWrites(t *testing.T) {
 			Update(ctx, ant.Set(&U.Age, 99))
 		require.ErrorContains(t, err, "need it to select User.ID")
 
+		// A set operation matches columns by position, so ages from the right side
+		// would land in the left side's key.
+		_, err = app.Users.Where(ant.Eq(&U.Name, "alice")).
+			Column(&U.ID).
+			Column(&U.Age).
+			Union(app.Users.Where(ant.Eq(&U.Name, "bob")).Column(&U.Age).Column(&U.ID)).
+			Delete(ctx)
+		require.ErrorContains(t, err, "need it to select User.ID")
+
 		_, err = ant.FromRaw[User](app, "SELECT * FROM users").
 			Where(ant.Eq(&U.Name, "bob")).
 			Delete(ctx)
