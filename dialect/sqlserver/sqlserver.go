@@ -23,6 +23,7 @@ var syntax = dialect.Syntax{
 		dialect.OnConflict,
 		dialect.DateCast,
 		dialect.DatePart,
+		dialect.SubqueryWith,
 	},
 	OffsetFetch:        true,
 	Output:             true,

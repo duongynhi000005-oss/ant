@@ -656,9 +656,11 @@ func (q *Query[T]) Each(ctx context.Context) iter.Seq2[T, error] {
 
 // bulkTarget returns the conditions a bulk write uses, global filters included.
 // SQL has no LIMIT on UPDATE and DELETE, so a limited query selects its rows by
-// key.
+// key. So does a query on a derived source, such as From, a set operation, or
+// Recursive, because UPDATE and DELETE name only the table, and the rows the
+// source picks would otherwise be lost.
 func (q *Query[T]) bulkTarget() ([]qb.Cond, error) {
-	if q.limit == nil && q.offset == nil {
+	if q.limit == nil && q.offset == nil && q.from == nil && len(q.with) == 0 {
 		return q.conditions(), nil
 	}
 
@@ -909,6 +911,7 @@ func (q *Query[T]) From(sub *Query[T]) *Query[T] {
 	}
 
 	n.from = &qb.Source{Sub: sub.statement(sub.selection()), Alias: n.model().Table.Name}
+	n.filtered = n.filtered || sub.filtered
 
 	return n
 }
@@ -925,6 +928,7 @@ func (q *Query[T]) FromCTE(name string, sub *Query[T]) *Query[T] {
 
 	n.with = append(n.with, qb.CTE{Name: name, Select: sub.statement(sub.selection())})
 	n.from = &qb.Source{Name: name, Alias: n.model().Table.Name}
+	n.filtered = n.filtered || sub.filtered
 
 	return n
 }
@@ -960,8 +964,25 @@ func (q *Query[T]) set(kind string, all bool, other *Query[T]) *Query[T] {
 	out := newQuery[T](q.state)
 	out.noTracking = q.noTracking
 	out.from = &qb.Source{Sub: combined, Alias: q.model().Table.Name}
+	out.filtered = setFiltered(kind, q.filtered, other.filtered)
 
 	return out
+}
+
+// setFiltered reports whether a set operation can leave rows out, so that a
+// bulk write on it passes the ErrNoCondition guard. A union has every row
+// unless both sides are filtered, and an intersection has none outside a
+// filtered side. EXCEPT counts only its first side, because a second side that
+// matches nothing would leave every row.
+func setFiltered(kind string, left, right bool) bool {
+	switch kind {
+	case "UNION":
+		return left && right
+	case "INTERSECT":
+		return left || right
+	default:
+		return left
+	}
 }
 
 // Union returns the rows of q or other, without duplicates. Conditions, ordering,
@@ -1031,6 +1052,7 @@ func recursive[T, V any](q *Query[T], rel *V) *Query[T] {
 	out.with = []qb.CTE{{Name: recursiveName, Select: seed}}
 	out.recursive = true
 	out.from = &qb.Source{Name: recursiveName, Alias: model.Table.Name}
+	out.filtered = q.filtered
 
 	return out
 }

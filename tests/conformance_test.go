@@ -309,6 +309,54 @@ func TestConformanceLimitedWrites(t *testing.T) {
 	})
 }
 
+// A bulk write on a derived source selects its rows by key, so the source
+// still decides which rows change.
+func TestConformanceDerivedWrites(t *testing.T) {
+	testdb.ForEach(t, func(t *testing.T, target testdb.Target) {
+		app := openAndSeed(t, target)
+		ctx := t.Context()
+		older := app.Users.Where(ant.Gt(&U.Age, 28))
+
+		age := func(name string) int {
+			u, err := app.Users.NoTracking().Where(ant.Eq(&U.Name, name)).First(ctx)
+			require.NoError(t, err)
+
+			return u.Age
+		}
+
+		changed, err := app.Users.Query().From(older).Update(ctx, ant.Inc(&U.Age, 1))
+		require.NoError(t, err)
+		require.EqualValues(t, 2, changed, "From")
+		require.Equal(t, 25, age("bob"))
+
+		// The key subquery carries the WITH, which SQL Server allows only at the
+		// start of a statement.
+		changed, err = app.Users.Query().
+			FromCTE("older", older).
+			Where(ant.Eq(&U.Name, "carol")).
+			Update(ctx, ant.Set(&U.Age, 50))
+
+		if has(target, dialect.SubqueryWith) {
+			require.NoError(t, err)
+			require.EqualValues(t, 1, changed, "FromCTE")
+		} else {
+			require.ErrorIs(t, err, ant.ErrUnsupported)
+		}
+
+		require.Equal(t, 31, age("alice"))
+
+		removed, err := app.Users.Where(ant.Eq(&U.Name, "alice")).
+			Union(app.Users.Where(ant.Eq(&U.Name, "bob"))).
+			Delete(ctx)
+		require.NoError(t, err)
+		require.EqualValues(t, 2, removed, "Union")
+
+		left, err := app.Users.All(ctx)
+		require.NoError(t, err)
+		require.Equal(t, []string{"carol"}, names(left))
+	})
+}
+
 func TestConformanceLocks(t *testing.T) {
 	testdb.ForEach(t, func(t *testing.T, target testdb.Target) {
 		app := openAndSeed(t, target)

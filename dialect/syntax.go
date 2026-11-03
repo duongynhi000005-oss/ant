@@ -24,6 +24,7 @@ const (
 	DefaultKeyword  Feature = "DEFAULT in a VALUES list"
 	DateCast        Feature = "CAST to date with CURRENT_DATE"
 	DatePart        Feature = "DATE_PART"
+	SubqueryWith    Feature = "WITH inside a subquery"
 )
 
 // Syntax says where a dialect's SQL differs from what Render writes, which is

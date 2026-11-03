@@ -74,6 +74,22 @@ func TestNoConditionGuard(t *testing.T) {
 			require.ErrorIs(t, err, ant.ErrNoCondition)
 		})
 
+		// A derived source counts as filtered when its rows are. A union has every
+		// row unless both sides are filtered.
+		t.Run("a derived source carries its filter", func(t *testing.T) {
+			adults := db.Users.Where(ant.Gt(&U.Age, 18))
+
+			_, err := adults.Union(db.Users.Query()).Delete(ctx)
+			require.ErrorIs(t, err, ant.ErrNoCondition)
+			_, err = db.Users.Query().From(db.Users.Query()).Delete(ctx)
+			require.ErrorIs(t, err, ant.ErrNoCondition)
+			assertUntouched(t)
+
+			n, err := db.Users.Query().From(adults).Update(ctx, ant.Inc(&U.Age, 1))
+			require.NoError(t, err)
+			require.EqualValues(t, 2, n)
+		})
+
 		t.Run("Unfiltered allows it", func(t *testing.T) {
 			n, err := db.Users.Unfiltered().Update(ctx, ant.Set(&U.Age, 50))
 			require.NoError(t, err)

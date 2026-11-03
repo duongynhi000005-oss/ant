@@ -23,6 +23,7 @@ func Render(d Dialect, stmt qb.Statement) (string, []any, error) {
 
 	switch s := stmt.(type) {
 	case *qb.Select:
+		r.top = s
 		r.selectStmt(s)
 	case *qb.Insert:
 		r.insert(s)
@@ -51,7 +52,8 @@ type renderer struct {
 	args []any
 	err  error
 
-	duplicateKey bool // inside ON DUPLICATE KEY UPDATE
+	top          *qb.Select // the statement itself, when it is a SELECT
+	duplicateKey bool       // inside ON DUPLICATE KEY UPDATE
 }
 
 func (r *renderer) fail(kind string, node any) {
@@ -407,6 +409,10 @@ func (r *renderer) selectStmt(s *qb.Select) {
 	}
 
 	if len(s.With) > 0 {
+		if s != r.top {
+			r.need(SubqueryWith)
+		}
+
 		r.write("WITH ")
 
 		if s.Recursive {

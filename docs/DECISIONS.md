@@ -188,7 +188,9 @@ Probe checks run at the terminal call, not as conditions are added. That lets `W
 
 ## 38. Bulk writes
 
-SQL has no `LIMIT` on `UPDATE` or `DELETE`, so a limited bulk write selects its rows by key in a subquery. `InsertMany` matches generated keys to rows by sorting them, since one statement draws sequence values in row order but `RETURNING` promises no order. It does not copy keys with a conflict clause, where rows may be skipped.
+SQL has no `LIMIT` on `UPDATE` or `DELETE`, so a limited bulk write selects its rows by key in a subquery. So does a bulk write on a derived source, such as `From`, `FromCTE`, a set operation, or `Recursive`, because `UPDATE` and `DELETE` name only the table: without the subquery, the outer conditions would run against every row of it. The guard of decision 23 counts a derived source as filtered when its rows are. `From`, `FromCTE`, and `Recursive` take their source's, a union needs both sides filtered, an intersection either, and `EXCEPT` its first, since a second side that matches nothing leaves every row. SQL Server allows `WITH` only at the start of a statement, so a write after `FromCTE` or `Recursive` returns `ErrUnsupported` there.
+
+`InsertMany` matches generated keys to rows by sorting them, since one statement draws sequence values in row order but `RETURNING` promises no order. It does not copy keys with a conflict clause, where rows may be skipped.
 
 ## 39. Global filters are lazy
 

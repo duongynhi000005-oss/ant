@@ -20,6 +20,7 @@ ant runs on five databases. PostgreSQL has everything. The others run queries, w
 | `DeleteReturning`, `Toggle` | Yes | No | Yes | Yes | Yes |
 | `Today` | Yes | Yes | Yes | No | No |
 | `DatePart` | Yes | No | No | No | No |
+| `WITH` in a subquery, as in `Update` or `Delete` after `FromCTE` or `Recursive` | Yes | Yes | Yes | Yes | No |
 | `ILike`, `FILTER`, `NULLS FIRST` | Native | Emulated | Emulated | `ILike` emulated | Emulated |
 
 Only PostgreSQL runs the whole feature suite, whose tables are written in its DDL. The conformance suite covers what the dialects write differently, on every database, but it is smaller, so expect rough edges off PostgreSQL that nobody has hit yet.
