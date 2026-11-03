@@ -112,8 +112,33 @@ func TestValues(t *testing.T) {
 			_, err := ant.Values[Wanted](db).All(ctx)
 			require.ErrorIs(t, err, ant.ErrNoRows)
 		})
+
+		// A bulk write finds the rows by key, so the key must be among the columns
+		// Values writes, and a writeonly one is not.
+		t.Run("Update and Delete find the rows by key", func(t *testing.T) {
+			_, err := ant.Values(db, Token{ID: 1, Name: "a"}).
+				Where(ant.Eq(&Tk.Name, "a")).
+				Delete(ctx)
+			require.ErrorContains(t, err, "need it to select Token.ID")
+
+			n, err := ant.Values(db, *bob).Where(ant.Eq(&U.Name, "Bob")).Delete(ctx)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, n)
+
+			left, err := db.Users.OrderBy(&U.Name).All(ctx)
+			require.NoError(t, err)
+			require.Equal(t, []string{"Alice", "Carol"}, fixture.Names(left))
+		})
 	})
 }
+
+// Token has a key that is written and never read.
+type Token struct {
+	ID   int64 `ant:"writeonly"`
+	Name string
+}
+
+var Tk = ant.Fields[Token]()
 
 // InTuples compares several columns at once.
 func TestInTuples(t *testing.T) {

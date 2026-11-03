@@ -36,33 +36,37 @@ func (s source) col(f *meta.Field) qb.Column {
 // builder holds the state common to every query shape. Builder methods record
 // errors here, and terminal calls return them.
 type builder struct {
-	state      *state
-	sources    []source
-	joins      []qb.Join
-	joined     []source      // the source of each join, for its global filters
-	refs       []*meta.Model // models that conditions and orderings refer to
-	where      []qb.Cond
-	order      []qb.Order
-	limit      *int
-	offset     *int
-	distinct   bool
-	group      []qb.Expr
-	having     []qb.Cond
-	lock       *qb.Lock
-	comment    string
-	hint       string
-	toMany     int // joins through a one-to-many relation
-	with       []qb.CTE
-	recursive  bool
-	from       *qb.Source // replaces the root table, keeping its name
-	ignored    []string   // global filters switched off
-	ignoreAll  bool
-	filtered   bool // has a condition that can exclude rows
-	unfiltered bool // Unfiltered was called
-	err        error
+	state        *state
+	sources      []source
+	joins        []qb.Join
+	joined       []source      // the source of each join, for its global filters
+	refs         []*meta.Model // models that conditions and orderings refer to
+	where        []qb.Cond
+	order        []qb.Order
+	limit        *int
+	offset       *int
+	distinct     bool
+	group        []qb.Expr
+	having       []qb.Cond
+	lock         *qb.Lock
+	comment      string
+	hint         string
+	toMany       int // joins through a one-to-many relation
+	with         []qb.CTE
+	recursive    bool
+	from         *qb.Source // replaces the root table, keeping its name
+	ignored      []string   // global filters switched off
+	ignoreAll    bool
+	filtered     bool // has a condition that can exclude rows
+	unfiltered   bool // Unfiltered was called
+	err          error
+	fromKey      bool // selects the model's stored key, which finds the rows to write
+	fromFiltered bool // has a condition that can exclude rows
 }
 
 func (b *builder) fail(err error) { b.err = errors.Join(b.err, err) }
+
+func (b *builder) narrowed() bool { return b.filtered || b.fromFiltered }
 
 // cloned returns a copy of b that shares no slices with it.
 func (b builder) cloned() builder {

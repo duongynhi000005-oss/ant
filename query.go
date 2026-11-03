@@ -656,21 +656,65 @@ func (q *Query[T]) Each(ctx context.Context) iter.Seq2[T, error] {
 
 // bulkTarget returns the conditions a bulk write uses, global filters included.
 // SQL has no LIMIT on UPDATE and DELETE, so a limited query selects its rows by
-// key.
+// key. So does a query on a derived source, such as From, a set operation, or
+// Recursive, because UPDATE and DELETE name only the table, and the rows the
+// source picks would otherwise be lost.
 func (q *Query[T]) bulkTarget() ([]qb.Cond, error) {
-	if q.limit == nil && q.offset == nil {
+	if q.limit == nil && q.offset == nil && q.from == nil && len(q.with) == 0 {
 		return q.conditions(), nil
 	}
 
-	key := q.model().Key()
+	model := q.model()
+
+	key := model.Key()
 	if key == nil {
 		return nil, ErrNoKey
+	}
+
+	// A source without the key cannot say which rows it came from, and some
+	// databases would resolve the key to the table being written instead.
+	if q.from != nil && !q.fromKey {
+		if q.from.Raw != nil {
+			return nil, errors.New(
+				"ant: Update and Delete cannot use FromRaw, whose columns ant cannot see",
+			)
+		}
+
+		return nil, fmt.Errorf(
+			"ant: Update and Delete on a derived source need it to select %s.%s",
+			model.Type.Name(),
+			key.Short,
+		)
 	}
 
 	column := q.sources[0].col(key)
 	sub := q.statement([]qb.Selected{{Value: column}})
 
+	// Order matters only to paging, and SQL Server refuses it in a subquery
+	// without OFFSET.
+	if q.limit == nil && q.offset == nil {
+		sub.Order = nil
+	}
+
 	return []qb.Cond{qb.In{Left: column, Sub: sub}}, nil
+}
+
+// keyIndex returns the position of the model's stored key in q's selection, or
+// -1 if q's rows do not carry it, so that a bulk write on a source made from q
+// can find the rows they came from. A set operation matches columns by
+// position, so its sides must agree on it. A computed column under the key's
+// name would make it ambiguous.
+func (q *Query[T]) keyIndex() int {
+	key := q.model().Key()
+
+	switch {
+	case key == nil, q.from != nil && !q.fromKey:
+		return -1
+	case slices.ContainsFunc(q.computed, func(c qb.Selected) bool { return c.Alias == key.Column }):
+		return -1
+	}
+
+	return slices.Index(q.columns(), key)
 }
 
 // update returns the statement for Update.
@@ -890,7 +934,7 @@ func (q *Query[T]) readRows(ctx context.Context, stmt qb.Statement) ([]*T, error
 func (b *builder) writable() error {
 	err := b.ready()
 
-	if !b.filtered && !b.unfiltered {
+	if !b.narrowed() && !b.unfiltered {
 		err = errors.Join(err, ErrNoCondition)
 	}
 
@@ -909,6 +953,8 @@ func (q *Query[T]) From(sub *Query[T]) *Query[T] {
 	}
 
 	n.from = &qb.Source{Sub: sub.statement(sub.selection()), Alias: n.model().Table.Name}
+	n.fromKey = sub.keyIndex() >= 0
+	n.fromFiltered = sub.narrowed()
 
 	return n
 }
@@ -925,6 +971,8 @@ func (q *Query[T]) FromCTE(name string, sub *Query[T]) *Query[T] {
 
 	n.with = append(n.with, qb.CTE{Name: name, Select: sub.statement(sub.selection())})
 	n.from = &qb.Source{Name: name, Alias: n.model().Table.Name}
+	n.fromKey = sub.keyIndex() >= 0
+	n.fromFiltered = sub.narrowed()
 
 	return n
 }
@@ -960,8 +1008,26 @@ func (q *Query[T]) set(kind string, all bool, other *Query[T]) *Query[T] {
 	out := newQuery[T](q.state)
 	out.noTracking = q.noTracking
 	out.from = &qb.Source{Sub: combined, Alias: q.model().Table.Name}
+	out.fromKey = q.keyIndex() >= 0 && q.keyIndex() == other.keyIndex()
+	out.fromFiltered = setFiltered(kind, q.narrowed(), other.narrowed())
 
 	return out
+}
+
+// setFiltered reports whether a set operation can leave rows out, so that a
+// bulk write on it passes the ErrNoCondition guard. A union has every row
+// unless both sides are filtered, and an intersection has none outside a
+// filtered side. EXCEPT counts only its first side, because a second side that
+// matches nothing would leave every row.
+func setFiltered(kind string, left, right bool) bool {
+	switch kind {
+	case "UNION":
+		return left && right
+	case "INTERSECT":
+		return left || right
+	default:
+		return left
+	}
 }
 
 // Union returns the rows of q or other, without duplicates. Conditions, ordering,
@@ -1031,6 +1097,8 @@ func recursive[T, V any](q *Query[T], rel *V) *Query[T] {
 	out.with = []qb.CTE{{Name: recursiveName, Select: seed}}
 	out.recursive = true
 	out.from = &qb.Source{Name: recursiveName, Alias: model.Table.Name}
+	out.fromKey = q.keyIndex() >= 0
+	out.fromFiltered = q.narrowed()
 
 	return out
 }

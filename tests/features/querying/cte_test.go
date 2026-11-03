@@ -91,6 +91,31 @@ func TestCTE(t *testing.T) {
 			require.EqualValues(t, 3, n)
 		})
 
+		// Update and Delete change only the rows the query found: here the tmp
+		// under archive, not the one under inbox.
+		t.Run("Update and Delete keep to the tree", func(t *testing.T) {
+			archive := add("archive", nil)
+			year := add("2025", archive)
+			add("tmp", year)
+			inbox := add("inbox", nil)
+			add("tmp", inbox)
+
+			tree := db.Branches.Where(ant.Eq(&Br.ID, archive.ID)).Recursive(&Br.Children)
+
+			n, err := tree.Where(ant.Eq(&Br.Name, "tmp")).Delete(ctx)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, n)
+
+			n, err = tree.Update(ctx, ant.Set(&Br.Name, "archived"))
+			require.NoError(t, err)
+			require.EqualValues(t, 2, n)
+
+			kept, err := db.Branches.Where(ant.Eq(&Br.Name, "tmp")).All(ctx)
+			require.NoError(t, err)
+			require.Len(t, kept, 1)
+			require.Equal(t, inbox.ID, *kept[0].ParentID)
+		})
+
 		// UNION drops rows already seen, so a loop in the data ends.
 		t.Run("a cycle in the data terminates", func(t *testing.T) {
 			_, err := db.Branches.Where(ant.Eq(&Br.ID, root.ID)).
