@@ -273,6 +273,7 @@ func Values[T any](h Handle, rows ...T) *Query[T] {
 	}
 
 	q.from = &qb.Source{Values: values, Alias: model.Table.Name}
+	q.fromKey = model.Key() != nil
 
 	return q
 }

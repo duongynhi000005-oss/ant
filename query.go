@@ -664,15 +664,47 @@ func (q *Query[T]) bulkTarget() ([]qb.Cond, error) {
 		return q.conditions(), nil
 	}
 
-	key := q.model().Key()
+	model := q.model()
+
+	key := model.Key()
 	if key == nil {
 		return nil, ErrNoKey
+	}
+
+	// A source without the key cannot say which rows it came from, and some
+	// databases would resolve the key to the table being written instead.
+	if q.from != nil && !q.fromKey {
+		if q.from.Raw != nil {
+			return nil, errors.New(
+				"ant: Update and Delete cannot use FromRaw, whose columns ant cannot see",
+			)
+		}
+
+		return nil, fmt.Errorf(
+			"ant: Update and Delete on a derived source need it to select %s.%s",
+			model.Type.Name(),
+			key.Short,
+		)
 	}
 
 	column := q.sources[0].col(key)
 	sub := q.statement([]qb.Selected{{Value: column}})
 
+	// Order matters only to paging, and SQL Server refuses it in a subquery
+	// without OFFSET.
+	if q.limit == nil && q.offset == nil {
+		sub.Order = nil
+	}
+
 	return []qb.Cond{qb.In{Left: column, Sub: sub}}, nil
+}
+
+// selectsKey reports whether q's rows carry the model's stored key, so that a
+// bulk write on a source made from q can find the rows they came from.
+func (q *Query[T]) selectsKey() bool {
+	key := q.model().Key()
+
+	return key != nil && slices.Contains(q.columns(), key) && (q.from == nil || q.fromKey)
 }
 
 // update returns the statement for Update.
@@ -892,7 +924,7 @@ func (q *Query[T]) readRows(ctx context.Context, stmt qb.Statement) ([]*T, error
 func (b *builder) writable() error {
 	err := b.ready()
 
-	if !b.filtered && !b.unfiltered {
+	if !b.narrowed() && !b.unfiltered {
 		err = errors.Join(err, ErrNoCondition)
 	}
 
@@ -911,7 +943,8 @@ func (q *Query[T]) From(sub *Query[T]) *Query[T] {
 	}
 
 	n.from = &qb.Source{Sub: sub.statement(sub.selection()), Alias: n.model().Table.Name}
-	n.filtered = n.filtered || sub.filtered
+	n.fromKey = sub.selectsKey()
+	n.fromFiltered = sub.narrowed()
 
 	return n
 }
@@ -928,7 +961,8 @@ func (q *Query[T]) FromCTE(name string, sub *Query[T]) *Query[T] {
 
 	n.with = append(n.with, qb.CTE{Name: name, Select: sub.statement(sub.selection())})
 	n.from = &qb.Source{Name: name, Alias: n.model().Table.Name}
-	n.filtered = n.filtered || sub.filtered
+	n.fromKey = sub.selectsKey()
+	n.fromFiltered = sub.narrowed()
 
 	return n
 }
@@ -964,7 +998,8 @@ func (q *Query[T]) set(kind string, all bool, other *Query[T]) *Query[T] {
 	out := newQuery[T](q.state)
 	out.noTracking = q.noTracking
 	out.from = &qb.Source{Sub: combined, Alias: q.model().Table.Name}
-	out.filtered = setFiltered(kind, q.filtered, other.filtered)
+	out.fromKey = q.selectsKey() && other.selectsKey()
+	out.fromFiltered = setFiltered(kind, q.narrowed(), other.narrowed())
 
 	return out
 }
@@ -1052,7 +1087,8 @@ func recursive[T, V any](q *Query[T], rel *V) *Query[T] {
 	out.with = []qb.CTE{{Name: recursiveName, Select: seed}}
 	out.recursive = true
 	out.from = &qb.Source{Name: recursiveName, Alias: model.Table.Name}
-	out.filtered = q.filtered
+	out.fromKey = q.selectsKey()
+	out.fromFiltered = q.narrowed()
 
 	return out
 }

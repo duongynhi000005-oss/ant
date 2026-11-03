@@ -75,13 +75,16 @@ func TestNoConditionGuard(t *testing.T) {
 		})
 
 		// A derived source counts as filtered when its rows are. A union has every
-		// row unless both sides are filtered.
+		// row unless both sides are filtered, and a replaced source no longer
+		// counts.
 		t.Run("a derived source carries its filter", func(t *testing.T) {
 			adults := db.Users.Where(ant.Gt(&U.Age, 18))
 
 			_, err := adults.Union(db.Users.Query()).Delete(ctx)
 			require.ErrorIs(t, err, ant.ErrNoCondition)
 			_, err = db.Users.Query().From(db.Users.Query()).Delete(ctx)
+			require.ErrorIs(t, err, ant.ErrNoCondition)
+			_, err = db.Users.Query().From(adults).From(db.Users.Query()).Delete(ctx)
 			require.ErrorIs(t, err, ant.ErrNoCondition)
 			assertUntouched(t)
 

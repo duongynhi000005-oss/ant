@@ -324,9 +324,29 @@ func TestConformanceDerivedWrites(t *testing.T) {
 			return u.Age
 		}
 
-		changed, err := app.Users.Query().From(older).Update(ctx, ant.Inc(&U.Age, 1))
+		// Without paging, the order is left out of the key subquery, where SQL
+		// Server refuses it.
+		changed, err := app.Users.Query().
+			From(older).
+			OrderBy(&U.Name).
+			Update(ctx, ant.Inc(&U.Age, 1))
 		require.NoError(t, err)
 		require.EqualValues(t, 2, changed, "From")
+		require.Equal(t, 25, age("bob"))
+
+		// A source without the key cannot say which rows it holds. Unchecked, some
+		// databases would match the key to the table being written, and change
+		// every row.
+		_, err = app.Users.Query().
+			From(older.Column(&U.Name)).
+			Where(ant.Eq(&U.Name, "alice")).
+			Update(ctx, ant.Set(&U.Age, 99))
+		require.ErrorContains(t, err, "need it to select User.ID")
+
+		_, err = ant.FromRaw[User](app, "SELECT * FROM users").
+			Where(ant.Eq(&U.Name, "bob")).
+			Delete(ctx)
+		require.ErrorContains(t, err, "cannot use FromRaw")
 		require.Equal(t, 25, age("bob"))
 
 		// The key subquery carries the WITH, which SQL Server allows only at the
