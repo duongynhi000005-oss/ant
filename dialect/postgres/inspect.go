@@ -468,7 +468,8 @@ func (d impl) indexes(ctx context.Context, q schema.Querier, t *liveTable) error
 		rows, err := q.QueryContext(
 			ctx,
 			`
-			SELECT ord, pg_get_indexdef(x.indexrelid, ord, true), x.indkey[ord - 1] = 0, x.indoption[ord - 1] & 1 = 1
+			SELECT ord, pg_get_indexdef(x.indexrelid, ord, true), x.indkey[ord - 1] = 0,
+			       COALESCE(x.indoption[ord - 1] & 1 = 1, false) -- included columns have no order
 			FROM pg_index x, generate_series(1, x.indnatts) ord
 			WHERE x.indexrelid = $1::bigint::oid
 			ORDER BY ord`,

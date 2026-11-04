@@ -80,6 +80,12 @@ type phases struct {
 	schemas, types, renames, dropKeys, dropRest, dropTables, dropColumns []Change
 	createTables, addColumns, alterColumns, addRest, addKeys, comments   []Change
 	dropTypes                                                            []Change
+
+	// unique holds the columns of each primary key, unique constraint, and
+	// unique index that the plan drops from a table it keeps. A foreign key that
+	// points at the same columns may depend on one of them, and PostgreSQL will
+	// not drop it until the foreign key is gone.
+	unique map[Ref][]columns
 }
 
 func (p *phases) plan() []Change {
@@ -187,6 +193,11 @@ func Diff(from, to *Schema, renames ...string) (*Plan, error) {
 		}
 
 		p.alterTable(o, t, gone)
+	}
+
+	// Foreign keys wait until every table has said which unique keys it drops.
+	for _, t := range to.Tables {
+		p.foreignKeys(old.Table(t.Ref()), t, gone)
 	}
 
 	for _, o := range old.Tables {
@@ -330,10 +341,6 @@ func (p *phases) createTable(t *Table) {
 	for _, index := range t.Indexes {
 		p.addRest = append(p.addRest, CreateIndex{Table: ref, Index: index, New: true})
 	}
-
-	for _, key := range t.ForeignKeys {
-		p.addKeys = append(p.addKeys, AddForeignKey{Table: ref, Key: key, New: true})
-	}
 }
 
 // replaced returns the columns that the plan drops and adds again, by table.
@@ -366,6 +373,42 @@ func (s columns) anyOf(names []string) bool {
 	return slices.ContainsFunc(names, func(name string) bool { return slices.Contains(s, name) })
 }
 
+// sameSet reports whether names are the columns, in any order, which is how a
+// foreign key finds the unique key it points at.
+func (s columns) sameSet(names []string) bool {
+	return len(s) == len(names) &&
+		!slices.ContainsFunc(names, func(name string) bool { return !slices.Contains(s, name) })
+}
+
+// key returns the columns of an index a foreign key can point at: a unique one,
+// on plain columns, with no predicate.
+func (i *Index) key() (columns, bool) {
+	if !i.Unique || i.Where != "" {
+		return nil, false
+	}
+
+	out := make(columns, len(i.Parts))
+
+	for n, part := range i.Parts {
+		if part.Expr != "" {
+			return nil, false
+		}
+
+		out[n] = part.Column
+	}
+
+	return out, true
+}
+
+// dropsUnique records that the plan drops a unique key on these columns.
+func (p *phases) dropsUnique(table Ref, key columns) {
+	if p.unique == nil {
+		p.unique = map[Ref][]columns{}
+	}
+
+	p.unique[table] = append(p.unique[table], key)
+}
+
 // mentioned reports whether a SQL expression names one of the columns. It errs
 // toward yes, as a string literal with the name counts too, which costs no more
 // than rebuilding something that did not need it.
@@ -392,6 +435,11 @@ func mentions(expr, name string) bool {
 
 	if name == "" {
 		return false
+	}
+
+	// A name with a double quote in it only appears quoted, with the quote doubled.
+	if strings.Contains(expr, `"`+strings.ReplaceAll(name, `"`, `""`)+`"`) {
+		return true
 	}
 
 	for from := 0; ; {
@@ -437,9 +485,9 @@ func inline(i *Index) *Index {
 	return &out
 }
 
-// alterTable compares two versions of a table. gone holds the columns the plan
-// replaces, by table. Dropping a column takes its indexes and constraints with
-// it, and foreign keys in other tables need it gone before it can be dropped.
+// alterTable compares two versions of a table, except for foreign keys. gone
+// holds the columns the plan replaces, by table: dropping a column takes its
+// indexes and constraints with it.
 func (p *phases) alterTable(o, t *Table, gone map[Ref]columns) {
 	ref := t.Ref()
 
@@ -483,11 +531,13 @@ func (p *phases) alterTable(o, t *Table, gone map[Ref]columns) {
 	switch {
 	case o.PrimaryKey != nil && t.PrimaryKey == nil:
 		p.dropRest = append(p.dropRest, DropPrimaryKey{Table: ref, Key: o.PrimaryKey})
+		p.dropsUnique(ref, o.PrimaryKey.Columns)
 	case o.PrimaryKey == nil && t.PrimaryKey != nil:
 		p.addRest = append(p.addRest, AddPrimaryKey{Table: ref, Key: t.PrimaryKey})
 	case o.PrimaryKey != nil &&
 		(!o.PrimaryKey.sameAs(t.PrimaryKey) || here.anyOf(o.PrimaryKey.Columns)):
 		p.dropRest = append(p.dropRest, DropPrimaryKey{Table: ref, Key: o.PrimaryKey})
+		p.dropsUnique(ref, o.PrimaryKey.Columns)
 		p.addRest = append(p.addRest, AddPrimaryKey{Table: ref, Key: t.PrimaryKey})
 	case o.PrimaryKey != nil && o.PrimaryKey.Name != t.PrimaryKey.Name:
 		p.renames = append(
@@ -502,7 +552,10 @@ func (p *phases) alterTable(o, t *Table, gone map[Ref]columns) {
 		func(k *Key) string { return k.Name },
 		(*Key).sameAs,
 		func(k *Key) bool { return here.anyOf(k.Columns) },
-		func(k *Key) { p.dropRest = append(p.dropRest, DropConstraint{Table: ref, Name: k.Name}) },
+		func(k *Key) {
+			p.dropRest = append(p.dropRest, DropConstraint{Table: ref, Name: k.Name})
+			p.dropsUnique(ref, k.Columns)
+		},
 		func(k *Key) { p.addRest = append(p.addRest, AddUnique{Table: ref, Key: k}) },
 		func(from, to string) {
 			p.renames = append(p.renames, RenameConstraint{Table: ref, From: from, To: to})
@@ -531,6 +584,10 @@ func (p *phases) alterTable(o, t *Table, gone map[Ref]columns) {
 		(*Index).sameAs,
 		here.usedBy,
 		func(i *Index) {
+			if key, ok := i.key(); ok {
+				p.dropsUnique(ref, key)
+			}
+
 			if here.usedBy(i) {
 				i = inline(i)
 			}
@@ -548,16 +605,39 @@ func (p *phases) alterTable(o, t *Table, gone map[Ref]columns) {
 			p.renames = append(p.renames, RenameIndex{Table: ref, From: from, To: to})
 		},
 	)
+}
+
+// foreignKeys compares the foreign keys of two versions of a table, or adds them
+// to a new one, which o is nil for. A key is dropped first and made again last
+// when it is on a replaced column, or points at one, or points at the columns of
+// a unique key that the plan drops, since it may depend on that.
+func (p *phases) foreignKeys(o, t *Table, gone map[Ref]columns) {
+	ref := t.Ref()
+
+	if o == nil {
+		for _, key := range t.ForeignKeys {
+			p.addKeys = append(p.addKeys, AddForeignKey{Table: ref, Key: key, New: true})
+		}
+
+		return
+	}
+
+	breaks := func(k *ForeignKey) bool {
+		target := Ref{k.RefSchema, k.RefTable}
+
+		return gone[ref].anyOf(k.Columns) || gone[target].anyOf(k.RefColumns) ||
+			slices.ContainsFunc(
+				p.unique[target],
+				func(key columns) bool { return key.sameSet(k.RefColumns) },
+			)
+	}
 
 	objects(
 		o.ForeignKeys,
 		t.ForeignKeys,
 		func(k *ForeignKey) string { return k.Name },
 		(*ForeignKey).sameAs,
-		func(k *ForeignKey) bool {
-			return here.anyOf(k.Columns) ||
-				gone[Ref{k.RefSchema, k.RefTable}].anyOf(k.RefColumns)
-		},
+		breaks,
 		func(k *ForeignKey) { p.dropKeys = append(p.dropKeys, DropForeignKey{Table: ref, Key: k}) },
 		func(k *ForeignKey) { p.addKeys = append(p.addKeys, AddForeignKey{Table: ref, Key: k}) },
 		func(from, to string) {
@@ -568,8 +648,9 @@ func (p *phases) alterTable(o, t *Table, gone map[Ref]columns) {
 
 // objects compares two lists of named objects. An object with the same definition
 // under a new name is renamed, so that an index on a large table is not rebuilt
-// because its name changed. An object that uses a replaced column is dropped and
-// made again, even if nothing about it changed, because the column takes it along.
+// because its name changed. An object for which uses is true is dropped and made
+// again, even if nothing about it changed, because something it needs is dropped:
+// a replaced column, or the unique key a foreign key points at.
 func objects[T any](
 	old, next []T,
 	name func(T) string,

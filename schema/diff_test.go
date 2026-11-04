@@ -303,6 +303,89 @@ func TestReplacedColumns(t *testing.T) {
 			run(t, of(keyed("lower(email)"), cards), of(keyed("upper(email)"), cards)),
 		)
 	})
+
+	t.Run("a name with a double quote in it is found quoted", func(t *testing.T) {
+		quoted := func(expr string) *schema.Table {
+			return &schema.Table{
+				Name: "odd",
+				Columns: []*schema.Column{
+					{Name: "label", Type: "text"},
+					{Name: `a"b`, Type: "text", Generated: expr},
+				},
+				Checks: []*schema.Check{{Name: "odd_check", Expr: `"a""b" <> ''`}},
+			}
+		}
+
+		require.Contains(
+			t,
+			run(t, of(quoted("lower(label)")), of(quoted("upper(label)"))),
+			`ALTER TABLE "odd" ADD CONSTRAINT "odd_check" CHECK ("a""b" <> '')`,
+		)
+	})
+}
+
+// PostgreSQL will not drop a unique key while a foreign key depends on it, so a
+// foreign key goes before the unique key it points at, and comes back after.
+func TestForeignKeysFollowTheirUniqueKey(t *testing.T) {
+	codes := func(include ...string) *schema.Table {
+		return &schema.Table{
+			Name: "codes",
+			Columns: []*schema.Column{
+				{Name: "region", Type: "text"},
+				{Name: "code", Type: "text"},
+				{Name: "label", Type: "text"},
+			},
+			Indexes: []*schema.Index{
+				{
+					Name:    "codes_key_idx",
+					Parts:   []schema.IndexPart{{Column: "region"}, {Column: "code"}},
+					Unique:  true,
+					Include: include,
+				},
+				{
+					Name:   "codes_label_idx",
+					Parts:  []schema.IndexPart{{Column: "label"}},
+					Unique: true,
+				},
+			},
+		}
+	}
+
+	// The key names its columns in another order than the index, which still
+	// counts, as it does for PostgreSQL.
+	uses := &schema.Table{
+		Name: "uses",
+		Columns: []*schema.Column{
+			{Name: "code", Type: "text"},
+			{Name: "region", Type: "text"},
+			{Name: "label", Type: "text"},
+		},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Name:       "uses_code_fkey",
+				Columns:    []string{"code", "region"},
+				RefTable:   "codes",
+				RefColumns: []string{"code", "region"},
+			},
+			{
+				Name:       "uses_label_fkey",
+				Columns:    []string{"label"},
+				RefTable:   "codes",
+				RefColumns: []string{"label"},
+			},
+		},
+	}
+
+	require.Equal(
+		t,
+		[]string{
+			`ALTER TABLE "uses" DROP CONSTRAINT "uses_code_fkey"`,
+			`DROP INDEX "codes_key_idx"`,
+			`CREATE UNIQUE INDEX "codes_key_idx" ON "codes" ("region", "code") INCLUDE ("label")`,
+			`ALTER TABLE "uses" ADD CONSTRAINT "uses_code_fkey" FOREIGN KEY ("code", "region") REFERENCES "codes" ("code", "region")`,
+		},
+		run(t, of(codes(), uses), of(codes("label"), uses)),
+	)
 }
 
 func TestWarnings(t *testing.T) {

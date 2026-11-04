@@ -9,8 +9,9 @@ import (
 )
 
 // The models below are a badge with a slug at three points in time. The slug
-// has everything that can depend on a column: a unique constraint, a check, an
-// index of two columns, a comment, and a foreign key from another table.
+// has everything that can depend on a column: a unique constraint, a check, a
+// comment, a foreign key from another table, and a unique index that includes
+// it, which a foreign key on the label depends on.
 
 // SlugV1 computes its slug from the label.
 type SlugV1 struct {
@@ -22,7 +23,7 @@ type SlugV1 struct {
 func (SlugV1) Configure(b *ant.ModelBuilder[SlugV1]) {
 	b.Table("badges")
 	b.Column(&S1.Slug).Generated("lower(label)").Unique().Comment("for URLs")
-	b.Index(&S1.Label).And(&S1.Slug)
+	b.Index(&S1.Label).Unique().Include(&S1.Slug)
 	b.Check("badges_slug_check", "slug <> ''")
 }
 
@@ -36,7 +37,7 @@ type SlugV2 struct {
 func (SlugV2) Configure(b *ant.ModelBuilder[SlugV2]) {
 	b.Table("badges")
 	b.Column(&S2.Slug).Generated("lower(trim(label))").Unique().Comment("for URLs")
-	b.Index(&S2.Label).And(&S2.Slug)
+	b.Index(&S2.Label).Unique().Include(&S2.Slug)
 	b.Check("badges_slug_check", "slug <> ''")
 }
 
@@ -50,18 +51,20 @@ type SlugV3 struct {
 func (SlugV3) Configure(b *ant.ModelBuilder[SlugV3]) {
 	b.Table("badges")
 	b.Column(&S3.Slug).Unique().Comment("for URLs")
-	b.Index(&S3.Label).And(&S3.Slug)
+	b.Index(&S3.Label).Unique().Include(&S3.Slug)
 	b.Check("badges_slug_check", "slug <> ''")
 }
 
-// Award refers to a badge by its slug.
+// Award refers to a badge by its slug, and by its label.
 type Award struct {
-	ID        int64
-	BadgeSlug string
+	ID         int64
+	BadgeSlug  string
+	BadgeLabel string
 }
 
 func (Award) Configure(b *ant.ModelBuilder[Award]) {
 	b.ForeignKey(ant.F(&AW.BadgeSlug)).References(ant.F(&S1.Slug))
+	b.ForeignKey(ant.F(&AW.BadgeLabel)).References(ant.F(&S1.Label))
 }
 
 // SlugV1DB is the application with SlugV1.
@@ -102,7 +105,7 @@ func TestGeneratedColumnChanges(t *testing.T) {
 		must[SlugV1DB](p, "diff", "start")
 		must[SlugV1DB](p, "up")
 		p.sql("INSERT INTO badges (label) VALUES ('Gold'), (' Silver')")
-		p.sql("INSERT INTO awards (badge_slug) VALUES ('gold')")
+		p.sql("INSERT INTO awards (badge_slug, badge_label) VALUES ('gold', 'Gold')")
 
 		slug := func(label string) string {
 			return scalar[string](p, "SELECT slug FROM badges WHERE label = $1", label)
@@ -117,8 +120,20 @@ func TestGeneratedColumnChanges(t *testing.T) {
 				`ALTER TABLE "awards" DROP CONSTRAINT "awards_badge_slug_fkey";`,
 			)
 
+			require.Contains(
+				t,
+				text,
+				`ALTER TABLE "awards" DROP CONSTRAINT "awards_badge_label_fkey";`,
+			)
+
 			require.Contains(t, text, `ALTER TABLE "badges" DROP COLUMN "slug";`)
-			require.Contains(t, text, `CREATE INDEX "badges_label_slug_idx"`)
+
+			require.Contains(
+				t,
+				text,
+				`CREATE UNIQUE INDEX "badges_label_idx" ON "badges" ("label") INCLUDE ("slug");`,
+			)
+
 			require.Contains(t, text, `COMMENT ON COLUMN "badges"."slug"`)
 
 			must[SlugV2DB](p, "up")
