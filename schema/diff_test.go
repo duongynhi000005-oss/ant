@@ -238,10 +238,50 @@ func TestReplacedColumns(t *testing.T) {
 		)
 	})
 
-	t.Run("indexes are rebuilt in the migration's transaction", func(t *testing.T) {
-		plan, err := schema.Diff(of(slugged("lower(email)")), of(slugged("upper(email)")))
+	t.Run("every index in the plan stays in its transaction", func(t *testing.T) {
+		// The concurrent index stops including name, and another table gets a
+		// concurrent index of its own. Built online, either would take the
+		// transaction away from the replaced column.
+		next := slugged("upper(email)")
+		next.Indexes[2].Include = nil
+		other := posts()
+		other.Indexes[0].Concurrent = true
+
+		other.Indexes = append(other.Indexes, &schema.Index{
+			Name:       "posts_id_idx",
+			Parts:      []schema.IndexPart{{Column: "id"}},
+			Concurrent: true,
+		})
+
+		plan, err := schema.Diff(of(slugged("lower(email)"), posts()), of(next, other))
 		require.NoError(t, err)
 		require.False(t, plan.Online())
+
+		got := run(t, of(slugged("lower(email)"), posts()), of(next, other))
+		require.Contains(t, got, `DROP INDEX "users_email_idx"`)
+		require.Contains(t, got, `CREATE INDEX "users_email_idx" ON "users" ("email")`)
+		require.Contains(t, got, `CREATE INDEX "posts_id_idx" ON "posts" ("id")`)
+
+		require.Contains(
+			t,
+			strings.Join(plan.Warnings(), "\n"),
+			"posts_id_idx is built without CONCURRENTLY, which blocks writes to posts while it builds",
+		)
+	})
+
+	t.Run("without a replaced column, indexes stay online", func(t *testing.T) {
+		next := posts()
+		next.Indexes = append(next.Indexes, &schema.Index{
+			Name:       "posts_id_idx",
+			Parts:      []schema.IndexPart{{Column: "id"}},
+			Concurrent: true,
+		})
+
+		require.Equal(
+			t,
+			[]string{`CREATE INDEX CONCURRENTLY "posts_id_idx" ON "posts" ("id")`},
+			run(t, of(posts()), of(next)),
+		)
 	})
 
 	t.Run("a column that becomes generated does too", func(t *testing.T) {

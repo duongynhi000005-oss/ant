@@ -210,7 +210,13 @@ func Diff(from, to *Schema, renames ...string) (*Plan, error) {
 		}
 	}
 
-	return &Plan{Changes: p.plan(), Hints: hints(old, to)}, nil
+	changes := p.plan()
+
+	if len(gone) > 0 {
+		atomic(changes)
+	}
+
+	return &Plan{Changes: changes, Hints: hints(old, to)}, nil
 }
 
 // rename applies a rename to s, as the database would.
@@ -471,18 +477,21 @@ func identifierAt(s string, i int) bool {
 	return c == '_' || c == '$' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 0x80
 }
 
-// inline returns i built in the same transaction as the change that replaces its
-// column. That change locks the table until the end anyway, and building the
-// index online would take the transaction away from the whole migration.
-func inline(i *Index) *Index {
-	if !i.Concurrent {
-		return i
+// atomic keeps every index change in the plan's transaction. A plan that
+// replaces a column needs one: run in parts, a failure could leave the column
+// replaced with its indexes and constraints gone. An online build anywhere in it
+// would take the transaction away from all of it.
+func atomic(changes []Change) {
+	for i, change := range changes {
+		switch c := change.(type) {
+		case CreateIndex:
+			c.Atomic = true
+			changes[i] = c
+		case DropIndex:
+			c.Atomic = true
+			changes[i] = c
+		}
 	}
-
-	out := *i
-	out.Concurrent = false
-
-	return &out
 }
 
 // alterTable compares two versions of a table, except for foreign keys. gone
@@ -588,19 +597,9 @@ func (p *phases) alterTable(o, t *Table, gone map[Ref]columns) {
 				p.dropsUnique(ref, key)
 			}
 
-			if here.usedBy(i) {
-				i = inline(i)
-			}
-
 			p.dropRest = append(p.dropRest, DropIndex{Table: ref, Index: i})
 		},
-		func(i *Index) {
-			if here.usedBy(i) {
-				i = inline(i)
-			}
-
-			p.addRest = append(p.addRest, CreateIndex{Table: ref, Index: i})
-		},
+		func(i *Index) { p.addRest = append(p.addRest, CreateIndex{Table: ref, Index: i}) },
 		func(from, to string) {
 			p.renames = append(p.renames, RenameIndex{Table: ref, From: from, To: to})
 		},

@@ -190,7 +190,7 @@ go run ./cmd/migrate diff rename_table --rename users=people
 
 Without either, the file warns and shows the statement to use instead, so you can edit it by hand. Constraints and indexes follow a rename by themselves, and are renamed, not rebuilt.
 
-**Generated columns keep what depends on them.** PostgreSQL before 17 cannot change a generated column's expression, so a new one means dropping the column and adding it again, and the drop takes its indexes and constraints with it. The file drops them first and makes them again after, along with foreign keys that point at the column, or at a unique index rebuilt with it. They are rebuilt in the migration's transaction, even with `Concurrently()`, because replacing the column locks the table anyway.
+**Generated columns keep what depends on them.** PostgreSQL before 17 cannot change a generated column's expression, so a new one means dropping the column and adding it again, and the drop takes its indexes and constraints with it. The file drops them first and makes them again after, along with foreign keys that point at the column, or at a unique index rebuilt with it. Such a file must run whole or not at all, so every index in it is built in its transaction, even with `Concurrently()`, and a warning names each one that asked to be built online. To build one online anyway, give it a migration of its own.
 
 ```sql
 DROP INDEX "badges_label_slug_idx";
