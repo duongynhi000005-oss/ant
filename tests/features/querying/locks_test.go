@@ -104,5 +104,7 @@ func TestTag(t *testing.T) {
 		require.NoError(t, err, "a comment cannot end early")
 		_, err = db.Users.Where().Tag("dashboard /* users").All(t.Context())
 		require.NoError(t, err, "or nest and never end")
+		_, err = db.Users.Where().Tag("dashboard /*/ users").All(t.Context())
+		require.NoError(t, err, "or recombine into a closer")
 	})
 }
