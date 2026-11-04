@@ -834,6 +834,7 @@ schema: func (c AddForeignKey) Warning() string
 schema: func (c AddPrimaryKey) String() string
 schema: func (c AddUnique) String() string
 schema: func (c AddUnique) Warning() string
+schema: func (c AlterColumn) Replaces() bool
 schema: func (c AlterColumn) String() string
 schema: func (c AlterColumn) Warning() string
 schema: func (c CreateEnum) String() string

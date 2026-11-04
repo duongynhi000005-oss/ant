@@ -28,7 +28,7 @@ func (Item) Configure(b *ant.ModelBuilder[Item]) {
 	b.Column(&I.Lower).Generated("lower(label)")
 	b.Check("items_kind_check", "kind IN ('plain', 'fancy')")
 	b.Check("items_weight_check", "weight BETWEEN 0 AND 100")
-	b.Index(&I.Kind).And(&I.Weight).Desc().Where("kind <> 'plain'")
+	b.Index(&I.Kind).And(&I.Weight).Desc().Where("kind <> 'plain'").Include(&I.Price)
 	b.IndexExpr("lower(label)").Name("items_label_lower_idx").Unique()
 }
 

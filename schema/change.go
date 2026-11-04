@@ -134,6 +134,16 @@ type AlterColumn struct {
 	From, To *Column
 }
 
+// Replaces reports whether the column is dropped and added again, which is how
+// it becomes generated or gets a new expression. PostgreSQL before 17 can do
+// neither in place, and a migration cannot know which version it will run on.
+// Indexes and constraints on the column go with it, so the plan drops and makes
+// them around this change. A dialect must replace the column exactly when this
+// is true.
+func (c AlterColumn) Replaces() bool {
+	return c.To.Generated != "" && c.From.Generated != c.To.Generated
+}
+
 // String implements Change.
 func (c AlterColumn) String() string {
 	var what []string
@@ -196,11 +206,21 @@ func (c AlterColumn) Warning() string {
 		)
 	}
 
-	if c.From.Generated != c.To.Generated {
+	switch {
+	case c.Replaces() && c.From.Generated == "":
 		out = append(
 			out,
 			fmt.Sprintf(
-				"changing whether %s.%s is generated rewrites the column.",
+				"%s.%s becomes generated, so it is dropped and added again: its stored values are replaced by computed ones, and its indexes and constraints are rebuilt.",
+				c.Table,
+				c.To.Name,
+			),
+		)
+	case c.Replaces():
+		out = append(
+			out,
+			fmt.Sprintf(
+				"%s.%s gets a new expression, so it is dropped and added again, which rewrites the table and rebuilds its indexes and constraints.",
 				c.Table,
 				c.To.Name,
 			),
@@ -291,10 +311,13 @@ func (c RenameConstraint) String() string {
 }
 
 // CreateIndex adds an index. New means its table is created by the same plan.
+// Atomic means the plan must run in one transaction, as a plan that replaces a
+// column must, so the index is built in it even if it asks to be concurrent.
 type CreateIndex struct {
-	Table Ref
-	Index *Index
-	New   bool
+	Table  Ref
+	Index  *Index
+	New    bool
+	Atomic bool
 }
 
 // String implements Change.
@@ -304,27 +327,45 @@ func (c CreateIndex) String() string {
 
 // Warning implements Change.
 func (c CreateIndex) Warning() string {
+	var out []string
+
 	if c.Index.Unique && !c.New {
-		return fmt.Sprintf(
-			"this fails if %s already holds duplicates for %s.",
-			c.Table,
-			c.Index.Name,
+		out = append(
+			out,
+			fmt.Sprintf(
+				"this fails if %s already holds duplicates for %s.",
+				c.Table,
+				c.Index.Name,
+			),
 		)
 	}
 
-	return ""
+	if c.Index.Concurrent && !c.New && c.Atomic {
+		out = append(
+			out,
+			fmt.Sprintf(
+				"%s is built without CONCURRENTLY, which blocks writes to %s while it builds, because this migration replaces a column and must run in one transaction. To build it online, move it to a migration of its own.",
+				c.Index.Name,
+				c.Table,
+			),
+		)
+	}
+
+	return strings.Join(out, " ")
 }
 
 // RunsOnline reports whether the index builds without blocking writes, which
 // PostgreSQL does not allow in a transaction. An index on a new table has no
 // writes to block.
-func (c CreateIndex) RunsOnline() bool { return c.Index.Concurrent && !c.New }
+func (c CreateIndex) RunsOnline() bool { return c.Index.Concurrent && !c.New && !c.Atomic }
 
-// DropIndex removes an index.
+// DropIndex removes an index. Atomic means the plan must run in one
+// transaction, as for CreateIndex.
 type DropIndex struct {
 	quiet
-	Table Ref
-	Index *Index
+	Table  Ref
+	Index  *Index
+	Atomic bool
 }
 
 // String implements Change.
@@ -333,7 +374,7 @@ func (c DropIndex) String() string {
 }
 
 // RunsOnline reports whether the index goes without blocking writes.
-func (c DropIndex) RunsOnline() bool { return c.Index.Concurrent }
+func (c DropIndex) RunsOnline() bool { return c.Index.Concurrent && !c.Atomic }
 
 // RenameIndex renames an index.
 type RenameIndex struct {
