@@ -183,6 +183,128 @@ func TestColumnChanges(t *testing.T) {
 	})
 }
 
+// A replaced column takes along every index and constraint that uses it, so the
+// plan drops them first and makes them again after.
+func TestReplacedColumns(t *testing.T) {
+	// slugged has a generated name, and objects that use it in every way an
+	// object can, beside some that do not.
+	slugged := func(expr string) *schema.Table {
+		t := users()
+		t.Columns = append(t.Columns, &schema.Column{Name: "username", Type: "text"})
+		t.Column("name").Generated = expr
+		t.Column("name").Comment = "shown to others"
+
+		t.Checks = []*schema.Check{
+			{Name: "users_name_check", Expr: "length(name) > 0"},
+			{Name: "users_username_check", Expr: "username <> ''"},
+		}
+
+		t.Indexes = []*schema.Index{
+			{Name: "users_lower_idx", Parts: []schema.IndexPart{{Expr: "lower(NAME)"}}},
+			{
+				Name:  "users_bio_idx",
+				Parts: []schema.IndexPart{{Column: "bio"}},
+				Where: `"name" IS NOT NULL`,
+			},
+			{
+				Name:       "users_email_idx",
+				Parts:      []schema.IndexPart{{Column: "email"}},
+				Include:    []string{"name"},
+				Concurrent: true,
+			},
+			{Name: "users_username_idx", Parts: []schema.IndexPart{{Column: "username"}}},
+		}
+
+		return t
+	}
+
+	t.Run("a new expression rebuilds what uses the column", func(t *testing.T) {
+		require.Equal(
+			t,
+			[]string{
+				`ALTER TABLE "users" DROP CONSTRAINT "users_name_check"`,
+				`DROP INDEX "users_lower_idx"`,
+				`DROP INDEX "users_bio_idx"`,
+				`DROP INDEX "users_email_idx"`,
+				`ALTER TABLE "users" DROP COLUMN "name"`,
+				`ALTER TABLE "users" ADD COLUMN "name" text NOT NULL GENERATED ALWAYS AS (upper(email)) STORED`,
+				`ALTER TABLE "users" ADD CONSTRAINT "users_name_check" CHECK (length(name) > 0)`,
+				`CREATE INDEX "users_lower_idx" ON "users" ((lower(NAME)))`,
+				`CREATE INDEX "users_bio_idx" ON "users" ("bio") WHERE "name" IS NOT NULL`,
+				`CREATE INDEX "users_email_idx" ON "users" ("email") INCLUDE ("name")`,
+				`COMMENT ON COLUMN "users"."name" IS 'shown to others'`,
+			},
+			run(t, of(slugged("lower(email)")), of(slugged("upper(email)"))),
+		)
+	})
+
+	t.Run("indexes are rebuilt in the migration's transaction", func(t *testing.T) {
+		plan, err := schema.Diff(of(slugged("lower(email)")), of(slugged("upper(email)")))
+		require.NoError(t, err)
+		require.False(t, plan.Online())
+	})
+
+	t.Run("a column that becomes generated does too", func(t *testing.T) {
+		got := run(t, of(slugged("")), of(slugged("upper(email)")))
+		require.Contains(t, got, `ALTER TABLE "users" DROP COLUMN "name"`)
+		require.Contains(t, got, `CREATE INDEX "users_lower_idx" ON "users" ((lower(NAME)))`)
+	})
+
+	t.Run("a column that stops being generated keeps its values and indexes", func(t *testing.T) {
+		require.Equal(
+			t,
+			[]string{`ALTER TABLE "users" ALTER COLUMN "name" DROP EXPRESSION`},
+			run(t, of(slugged("lower(email)")), of(slugged(""))),
+		)
+	})
+
+	t.Run("a renamed index is rebuilt under its new name", func(t *testing.T) {
+		next := slugged("upper(email)")
+		next.Indexes[0].Name = "users_name_lower_idx"
+		got := run(t, of(slugged("lower(email)")), of(next))
+		require.Contains(t, got, `DROP INDEX "users_lower_idx"`)
+		require.Contains(t, got, `CREATE INDEX "users_name_lower_idx" ON "users" ((lower(NAME)))`)
+		require.NotContains(t, strings.Join(got, "\n"), "RENAME")
+	})
+
+	t.Run("keys on the column are rebuilt, in this table and others", func(t *testing.T) {
+		keyed := func(expr string) *schema.Table {
+			t := users()
+			t.Column("name").Generated = expr
+			t.PrimaryKey.Columns = []string{"id", "name"}
+			t.Uniques = []*schema.Key{{Name: "users_name_key", Columns: []string{"name"}}}
+
+			return t
+		}
+
+		cards := &schema.Table{
+			Name:    "cards",
+			Columns: []*schema.Column{{Name: "user_name", Type: "text"}},
+			ForeignKeys: []*schema.ForeignKey{{
+				Name:       "cards_user_name_fkey",
+				Columns:    []string{"user_name"},
+				RefTable:   "users",
+				RefColumns: []string{"name"},
+			}},
+		}
+
+		require.Equal(
+			t,
+			[]string{
+				`ALTER TABLE "cards" DROP CONSTRAINT "cards_user_name_fkey"`,
+				`ALTER TABLE "users" DROP CONSTRAINT "users_pkey"`,
+				`ALTER TABLE "users" DROP CONSTRAINT "users_name_key"`,
+				`ALTER TABLE "users" DROP COLUMN "name"`,
+				`ALTER TABLE "users" ADD COLUMN "name" text NOT NULL GENERATED ALWAYS AS (upper(email)) STORED`,
+				`ALTER TABLE "users" ADD CONSTRAINT "users_pkey" PRIMARY KEY ("id", "name")`,
+				`ALTER TABLE "users" ADD CONSTRAINT "users_name_key" UNIQUE ("name")`,
+				`ALTER TABLE "cards" ADD CONSTRAINT "cards_user_name_fkey" FOREIGN KEY ("user_name") REFERENCES "users" ("name")`,
+			},
+			run(t, of(keyed("lower(email)"), cards), of(keyed("upper(email)"), cards)),
+		)
+	})
+}
+
 func TestWarnings(t *testing.T) {
 	warnings := func(t *testing.T, from, to *schema.Schema) string {
 		plan, err := schema.Diff(from, to)
@@ -207,6 +329,27 @@ func TestWarnings(t *testing.T) {
 		next := users()
 		next.Column("bio").Nullable = false
 		require.Contains(t, warnings(t, of(users()), of(next)), "fails if any row holds NULL")
+	})
+
+	t.Run("replacing a column", func(t *testing.T) {
+		generated := users()
+		generated.Column("name").Generated = "lower(email)"
+		trimmed := users()
+		trimmed.Column("name").Generated = "lower(trim(email))"
+
+		require.Contains(
+			t,
+			warnings(t, of(users()), of(generated)),
+			"stored values are replaced by computed ones",
+		)
+
+		require.Contains(
+			t,
+			warnings(t, of(generated), of(trimmed)),
+			"users.name gets a new expression, so it is dropped and added again",
+		)
+
+		require.Empty(t, warnings(t, of(generated), of(users())))
 	})
 
 	t.Run("a new table has no rows to worry about", func(t *testing.T) {

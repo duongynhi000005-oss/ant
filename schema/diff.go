@@ -176,6 +176,8 @@ func Diff(from, to *Schema, renames ...string) (*Plan, error) {
 
 	p.compareTypes(old, to)
 
+	gone := replaced(old, to)
+
 	for _, t := range to.Tables {
 		o := old.Table(t.Ref())
 		if o == nil {
@@ -184,7 +186,7 @@ func Diff(from, to *Schema, renames ...string) (*Plan, error) {
 			continue
 		}
 
-		p.alterTable(o, t)
+		p.alterTable(o, t, gone)
 	}
 
 	for _, o := range old.Tables {
@@ -334,8 +336,114 @@ func (p *phases) createTable(t *Table) {
 	}
 }
 
-func (p *phases) alterTable(o, t *Table) {
+// replaced returns the columns that the plan drops and adds again, by table.
+func replaced(old, to *Schema) map[Ref]columns {
+	out := map[Ref]columns{}
+
+	for _, t := range to.Tables {
+		o := old.Table(t.Ref())
+		if o == nil {
+			continue
+		}
+
+		for _, c := range t.Columns {
+			existing := o.Column(c.Name)
+
+			if existing != nil && (AlterColumn{From: existing, To: c}).Replaces() {
+				out[t.Ref()] = append(out[t.Ref()], c.Name)
+			}
+		}
+	}
+
+	return out
+}
+
+// columns is a set of column names.
+type columns []string
+
+// anyOf reports whether names holds one of the columns.
+func (s columns) anyOf(names []string) bool {
+	return slices.ContainsFunc(names, func(name string) bool { return slices.Contains(s, name) })
+}
+
+// mentioned reports whether a SQL expression names one of the columns. It errs
+// toward yes, as a string literal with the name counts too, which costs no more
+// than rebuilding something that did not need it.
+func (s columns) mentioned(expr string) bool {
+	return slices.ContainsFunc(s, func(name string) bool { return mentions(expr, name) })
+}
+
+// usedBy reports whether an index is on one of the columns, includes one, or
+// names one in an expression or its predicate.
+func (s columns) usedBy(i *Index) bool {
+	for _, part := range i.Parts {
+		if slices.Contains(s, part.Column) || s.mentioned(part.Expr) {
+			return true
+		}
+	}
+
+	return s.anyOf(i.Include) || s.mentioned(i.Where)
+}
+
+// mentions reports whether expr has name as a whole identifier. Unquoted names
+// fold to lower case, so case does not matter.
+func mentions(expr, name string) bool {
+	expr, name = strings.ToLower(expr), strings.ToLower(name)
+
+	if name == "" {
+		return false
+	}
+
+	for from := 0; ; {
+		at := strings.Index(expr[from:], name)
+		if at < 0 {
+			return false
+		}
+
+		start := from + at
+		end := start + len(name)
+
+		if !identifierAt(expr, start-1) && !identifierAt(expr, end) {
+			return true
+		}
+
+		from = start + 1
+	}
+}
+
+// identifierAt reports whether s[i] can be part of an unquoted identifier. s is in
+// lower case, and bytes past ASCII are letters of some other alphabet.
+func identifierAt(s string, i int) bool {
+	if i < 0 || i >= len(s) {
+		return false
+	}
+
+	c := s[i]
+
+	return c == '_' || c == '$' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 0x80
+}
+
+// inline returns i built in the same transaction as the change that replaces its
+// column. That change locks the table until the end anyway, and building the
+// index online would take the transaction away from the whole migration.
+func inline(i *Index) *Index {
+	if !i.Concurrent {
+		return i
+	}
+
+	out := *i
+	out.Concurrent = false
+
+	return &out
+}
+
+// alterTable compares two versions of a table. gone holds the columns the plan
+// replaces, by table. Dropping a column takes its indexes and constraints with
+// it, and foreign keys in other tables need it gone before it can be dropped.
+func (p *phases) alterTable(o, t *Table, gone map[Ref]columns) {
 	ref := t.Ref()
+
+	here := gone[ref]
 
 	if o.Comment != t.Comment {
 		p.comments = append(p.comments, SetTableComment{Table: ref, Comment: t.Comment})
@@ -351,8 +459,14 @@ func (p *phases) alterTable(o, t *Table) {
 			p.alterColumns = append(p.alterColumns, AlterColumn{Table: ref, From: existing, To: c})
 		}
 
-		if (existing == nil && c.Comment != "") ||
-			(existing != nil && existing.Comment != c.Comment) {
+		// The comment the column has once the changes above have run.
+		comment := ""
+
+		if existing != nil && !slices.Contains(here, c.Name) {
+			comment = existing.Comment
+		}
+
+		if comment != c.Comment {
 			p.comments = append(
 				p.comments,
 				SetColumnComment{Table: ref, Column: c.Name, Comment: c.Comment},
@@ -371,7 +485,8 @@ func (p *phases) alterTable(o, t *Table) {
 		p.dropRest = append(p.dropRest, DropPrimaryKey{Table: ref, Key: o.PrimaryKey})
 	case o.PrimaryKey == nil && t.PrimaryKey != nil:
 		p.addRest = append(p.addRest, AddPrimaryKey{Table: ref, Key: t.PrimaryKey})
-	case o.PrimaryKey != nil && !o.PrimaryKey.sameAs(t.PrimaryKey):
+	case o.PrimaryKey != nil &&
+		(!o.PrimaryKey.sameAs(t.PrimaryKey) || here.anyOf(o.PrimaryKey.Columns)):
 		p.dropRest = append(p.dropRest, DropPrimaryKey{Table: ref, Key: o.PrimaryKey})
 		p.addRest = append(p.addRest, AddPrimaryKey{Table: ref, Key: t.PrimaryKey})
 	case o.PrimaryKey != nil && o.PrimaryKey.Name != t.PrimaryKey.Name:
@@ -386,6 +501,7 @@ func (p *phases) alterTable(o, t *Table) {
 		t.Uniques,
 		func(k *Key) string { return k.Name },
 		(*Key).sameAs,
+		func(k *Key) bool { return here.anyOf(k.Columns) },
 		func(k *Key) { p.dropRest = append(p.dropRest, DropConstraint{Table: ref, Name: k.Name}) },
 		func(k *Key) { p.addRest = append(p.addRest, AddUnique{Table: ref, Key: k}) },
 		func(from, to string) {
@@ -398,6 +514,7 @@ func (p *phases) alterTable(o, t *Table) {
 		t.Checks,
 		func(c *Check) string { return c.Name },
 		(*Check).sameAs,
+		func(c *Check) bool { return here.mentioned(c.Expr) },
 		func(c *Check) {
 			p.dropRest = append(p.dropRest, DropConstraint{Table: ref, Name: c.Name})
 		},
@@ -412,8 +529,21 @@ func (p *phases) alterTable(o, t *Table) {
 		t.Indexes,
 		func(i *Index) string { return i.Name },
 		(*Index).sameAs,
-		func(i *Index) { p.dropRest = append(p.dropRest, DropIndex{Table: ref, Index: i}) },
-		func(i *Index) { p.addRest = append(p.addRest, CreateIndex{Table: ref, Index: i}) },
+		here.usedBy,
+		func(i *Index) {
+			if here.usedBy(i) {
+				i = inline(i)
+			}
+
+			p.dropRest = append(p.dropRest, DropIndex{Table: ref, Index: i})
+		},
+		func(i *Index) {
+			if here.usedBy(i) {
+				i = inline(i)
+			}
+
+			p.addRest = append(p.addRest, CreateIndex{Table: ref, Index: i})
+		},
 		func(from, to string) {
 			p.renames = append(p.renames, RenameIndex{Table: ref, From: from, To: to})
 		},
@@ -424,6 +554,10 @@ func (p *phases) alterTable(o, t *Table) {
 		t.ForeignKeys,
 		func(k *ForeignKey) string { return k.Name },
 		(*ForeignKey).sameAs,
+		func(k *ForeignKey) bool {
+			return here.anyOf(k.Columns) ||
+				gone[Ref{k.RefSchema, k.RefTable}].anyOf(k.RefColumns)
+		},
 		func(k *ForeignKey) { p.dropKeys = append(p.dropKeys, DropForeignKey{Table: ref, Key: k}) },
 		func(k *ForeignKey) { p.addKeys = append(p.addKeys, AddForeignKey{Table: ref, Key: k}) },
 		func(from, to string) {
@@ -434,11 +568,13 @@ func (p *phases) alterTable(o, t *Table) {
 
 // objects compares two lists of named objects. An object with the same definition
 // under a new name is renamed, so that an index on a large table is not rebuilt
-// because its name changed.
+// because its name changed. An object that uses a replaced column is dropped and
+// made again, even if nothing about it changed, because the column takes it along.
 func objects[T any](
 	old, next []T,
 	name func(T) string,
 	same func(a, b T) bool,
+	uses func(T) bool,
 	drop, add func(T),
 	rename func(from, to string),
 ) {
@@ -462,7 +598,7 @@ func objects[T any](
 		if existing, ok := find(old, name(item)); ok {
 			taken[name(existing)] = true
 
-			if !same(existing, item) {
+			if !same(existing, item) || uses(existing) || uses(item) {
 				drop(existing)
 				add(item)
 			}
@@ -477,7 +613,7 @@ func objects[T any](
 		matched := false
 
 		for _, existing := range old {
-			if !taken[name(existing)] && same(existing, item) {
+			if !taken[name(existing)] && same(existing, item) && !uses(existing) {
 				taken[name(existing)] = true
 				rename(name(existing), name(item))
 

@@ -112,10 +112,13 @@ func (d impl) names(columns []string) string {
 
 func (d impl) column(c *schema.Column) string {
 	var b strings.Builder
-	b.WriteString(d.Quote(c.Name) + " " + c.Type)
+	b.WriteString(d.Quote(c.Name))
+	b.WriteString(" ")
+	b.WriteString(c.Type)
 
 	if c.Collation != "" {
-		b.WriteString(" COLLATE " + d.Quote(c.Collation))
+		b.WriteString(" COLLATE ")
+		b.WriteString(d.Quote(c.Collation))
 	}
 
 	if c.Identity {
@@ -130,9 +133,12 @@ func (d impl) column(c *schema.Column) string {
 
 	switch {
 	case c.Generated != "":
-		b.WriteString(" GENERATED ALWAYS AS (" + c.Generated + ") STORED")
+		b.WriteString(" GENERATED ALWAYS AS (")
+		b.WriteString(c.Generated)
+		b.WriteString(") STORED")
 	case c.Default != "":
-		b.WriteString(" DEFAULT " + c.Default)
+		b.WriteString(" DEFAULT ")
+		b.WriteString(c.Default)
 	}
 
 	return b.String()
@@ -192,10 +198,13 @@ func (d impl) createIndex(ref schema.Ref, i *schema.Index, online bool) string {
 		b.WriteString("CONCURRENTLY ")
 	}
 
-	b.WriteString(d.Quote(i.Name) + " ON " + d.table(ref))
+	b.WriteString(d.Quote(i.Name))
+	b.WriteString(" ON ")
+	b.WriteString(d.table(ref))
 
 	if i.Method != "" {
-		b.WriteString(" USING " + i.Method)
+		b.WriteString(" USING ")
+		b.WriteString(i.Method)
 	}
 
 	parts := make([]string, len(i.Parts))
@@ -212,14 +221,19 @@ func (d impl) createIndex(ref schema.Ref, i *schema.Index, online bool) string {
 		}
 	}
 
-	b.WriteString(" (" + strings.Join(parts, ", ") + ")")
+	b.WriteString(" (")
+	b.WriteString(strings.Join(parts, ", "))
+	b.WriteByte(')')
 
 	if len(i.Include) > 0 {
-		b.WriteString(" INCLUDE (" + d.names(i.Include) + ")")
+		b.WriteString(" INCLUDE (")
+		b.WriteString(d.names(i.Include))
+		b.WriteByte(')')
 	}
 
 	if i.Where != "" {
-		b.WriteString(" WHERE " + i.Where)
+		b.WriteString(" WHERE ")
+		b.WriteString(i.Where)
 	}
 
 	return b.String()
@@ -253,8 +267,9 @@ func (d impl) foreignKey(ref schema.Ref, k *schema.ForeignKey) string {
 
 func (d impl) alterColumn(c schema.AlterColumn) []string {
 	alter := "ALTER TABLE " + d.table(c.Table) + " ALTER COLUMN " + d.Quote(c.To.Name)
-	// A generated column cannot be converted, so it is replaced.
-	if c.From.Generated != c.To.Generated {
+	// SET EXPRESSION needs PostgreSQL 17, so the column is replaced, and the plan
+	// rebuilds what goes with it.
+	if c.Replaces() {
 		return []string{
 			"ALTER TABLE " + d.table(c.Table) + " DROP COLUMN " + d.Quote(c.From.Name),
 			"ALTER TABLE " + d.table(c.Table) + " ADD COLUMN " + d.column(c.To),
@@ -262,6 +277,10 @@ func (d impl) alterColumn(c schema.AlterColumn) []string {
 	}
 
 	var out []string
+
+	if c.From.Generated != c.To.Generated {
+		out = append(out, alter+" DROP EXPRESSION")
+	}
 
 	if c.From.Type != c.To.Type || c.From.Collation != c.To.Collation {
 		statement := alter + " TYPE " + c.To.Type
@@ -471,7 +490,9 @@ func (d impl) EnsureTable(t *schema.Table) ([]string, error) {
 // a whole script, and a DO block is one transaction.
 func (impl) Guarded(condition string, scripts ...string) string {
 	var b strings.Builder
-	b.WriteString("DO $ant$\nBEGIN\n  IF " + condition + " THEN\n")
+	b.WriteString("DO $ant$\nBEGIN\n  IF ")
+	b.WriteString(condition)
+	b.WriteString(" THEN\n")
 
 	for _, script := range scripts {
 		tag := "$ant_sql$"
@@ -479,7 +500,13 @@ func (impl) Guarded(condition string, scripts ...string) string {
 			tag = fmt.Sprintf("$ant_sql_%d$", n)
 		}
 
-		b.WriteString("    EXECUTE " + tag + "\n" + script + "\n" + tag + ";\n")
+		b.WriteString("    EXECUTE ")
+		b.WriteString(tag)
+		b.WriteByte('\n')
+		b.WriteString(script)
+		b.WriteByte('\n')
+		b.WriteString(tag)
+		b.WriteString(";\n")
 	}
 
 	b.WriteString("  END IF;\nEND\n$ant$")

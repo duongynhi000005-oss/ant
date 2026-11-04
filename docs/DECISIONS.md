@@ -388,3 +388,13 @@ The owner wants code with room in it: a field per line, a blank line before a `r
 
 A literal with four or more keyed fields gets one per line, because three short ones read fine on a line, and test tables would grow a lot if they did not. Positional rows stay on one line for the same reason. Long strings and SQL stay whole.
 
+
+## 78. A replaced column takes its dependents along, and they come back
+
+PostgreSQL 17 can change a generated column's expression in place, with `SET EXPRESSION`, but ant supports 13 and later, and a migration is written without knowing which server will run it. So a new expression, or a column that becomes generated, is a `DROP COLUMN` and an `ADD COLUMN`. `AlterColumn.Replaces` says when, and the PostgreSQL dialect follows it exactly.
+
+The drop takes indexes, unique and check constraints, the primary key, and the comment with it, and is refused while a foreign key in another table points at the column. A snapshot still lists all of these, so `check` passed while the database had lost them, and only `drift` would have found it. The plan now drops each of them before the column and makes them again after. An object counts as using the column if it names it in its columns, its included columns, an expression, or a predicate. Expressions are matched as text, by whole identifier, and erring toward a match costs only a rebuild that was not needed.
+
+Rebuilt indexes skip `CONCURRENTLY`. Replacing the column holds an exclusive lock on the table until the migration ends, so an online build gains nothing, and it would take the transaction away from the whole file. Half a migration would leave the column without its indexes, which is the failure this decision is about.
+
+A column that stops being generated is not replaced: `DROP EXPRESSION` (PostgreSQL 13) keeps its values and everything on it. Before this, it was dropped and added empty, which lost the data, or failed on a `NOT NULL` column with rows.

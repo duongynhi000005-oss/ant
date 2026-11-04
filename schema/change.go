@@ -134,6 +134,16 @@ type AlterColumn struct {
 	From, To *Column
 }
 
+// Replaces reports whether the column is dropped and added again, which is how
+// it becomes generated or gets a new expression. PostgreSQL before 17 can do
+// neither in place, and a migration cannot know which version it will run on.
+// Indexes and constraints on the column go with it, so the plan drops and makes
+// them around this change. A dialect must replace the column exactly when this
+// is true.
+func (c AlterColumn) Replaces() bool {
+	return c.To.Generated != "" && c.From.Generated != c.To.Generated
+}
+
 // String implements Change.
 func (c AlterColumn) String() string {
 	var what []string
@@ -196,11 +206,21 @@ func (c AlterColumn) Warning() string {
 		)
 	}
 
-	if c.From.Generated != c.To.Generated {
+	switch {
+	case c.Replaces() && c.From.Generated == "":
 		out = append(
 			out,
 			fmt.Sprintf(
-				"changing whether %s.%s is generated rewrites the column.",
+				"%s.%s becomes generated, so it is dropped and added again: its stored values are replaced by computed ones, and its indexes and constraints are rebuilt.",
+				c.Table,
+				c.To.Name,
+			),
+		)
+	case c.Replaces():
+		out = append(
+			out,
+			fmt.Sprintf(
+				"%s.%s gets a new expression, so it is dropped and added again, which rewrites the table and rebuilds its indexes and constraints.",
 				c.Table,
 				c.To.Name,
 			),

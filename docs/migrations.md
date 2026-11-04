@@ -190,6 +190,20 @@ go run ./cmd/migrate diff rename_table --rename users=people
 
 Without either, the file warns and shows the statement to use instead, so you can edit it by hand. Constraints and indexes follow a rename by themselves, and are renamed, not rebuilt.
 
+**Generated columns keep what depends on them.** PostgreSQL before 17 cannot change a generated column's expression, so a new one means dropping the column and adding it again, and the drop takes its indexes and constraints with it. The file drops them first and makes them again after, along with foreign keys from other tables that point at the column. They are rebuilt in the migration's transaction, even with `Concurrently()`, because replacing the column locks the table anyway.
+
+```sql
+DROP INDEX "badges_label_slug_idx";
+
+-- WARNING: badges.slug gets a new expression, so it is dropped and added again, which rewrites the table and rebuilds its indexes and constraints.
+ALTER TABLE "badges" DROP COLUMN "slug";
+ALTER TABLE "badges" ADD COLUMN "slug" text NOT NULL GENERATED ALWAYS AS (lower(trim(label))) STORED;
+
+CREATE INDEX "badges_label_slug_idx" ON "badges" ("label", "slug");
+```
+
+A column that stops being generated keeps its values, with `ALTER COLUMN ... DROP EXPRESSION`.
+
 **Generated SQL is a starting point.** The file is yours. This is the usual reason to edit one: `slug` is required and unique, and the generated file would give every existing post the same empty value.
 
 ```sql
