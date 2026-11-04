@@ -3,7 +3,10 @@ package schema
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // Hint is a possible rename that a diff saw but cannot be sure of. A rename and a
@@ -437,11 +440,15 @@ func (s columns) usedBy(i *Index) bool {
 // mentions reports whether expr has name as a whole identifier. Unquoted names
 // fold to lower case, so case does not matter.
 func mentions(expr, name string) bool {
-	expr, name = strings.ToLower(expr), strings.ToLower(name)
-
 	if name == "" {
 		return false
 	}
+
+	if spelledOut(expr, name) {
+		return true
+	}
+
+	expr, name = strings.ToLower(expr), strings.ToLower(name)
 
 	// A name with a double quote in it only appears quoted, with the quote doubled.
 	if strings.Contains(expr, `"`+strings.ReplaceAll(name, `"`, `""`)+`"`) {
@@ -475,6 +482,118 @@ func identifierAt(s string, i int) bool {
 	c := s[i]
 
 	return c == '_' || c == '$' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 0x80
+}
+
+// spelledOut reports whether expr has name as a Unicode-escaped identifier, such
+// as U&"sl\0075g" for slug, in any case. The escape character is a backslash
+// unless a UESCAPE clause, which may come after comments, picks another, so every
+// ASCII byte in the identifier is tried as one: a wrong one can only find the name
+// where it is not.
+func spelledOut(expr, name string) bool {
+	for from := 0; ; {
+		at := strings.Index(expr[from:], `&"`)
+		if at < 0 {
+			return false
+		}
+
+		start := from + at + len(`&"`)
+		from = start
+
+		if start < 3 || expr[start-3] != 'u' && expr[start-3] != 'U' {
+			continue
+		}
+
+		end := start
+
+		for end < len(expr) && (expr[end] != '"' || strings.HasPrefix(expr[end:], `""`)) {
+			if expr[end] == '"' {
+				end++
+			}
+
+			end++
+		}
+
+		body := strings.ReplaceAll(expr[start:end], `""`, `"`)
+
+		for i := 0; i < len(body); i++ {
+			escape := body[i]
+
+			if escape >= 0x80 || strings.IndexByte(body[:i], escape) >= 0 {
+				continue
+			}
+
+			if spelled, ok := unescape(body, escape); ok && strings.EqualFold(spelled, name) {
+				return true
+			}
+		}
+	}
+}
+
+// unescape decodes the body of a Unicode-escaped identifier. The escape and four
+// hex digits, or the escape, a plus sign and six, make a code point; two escapes
+// make one; and a UTF-16 surrogate pair makes the code point it encodes.
+func unescape(body string, escape byte) (string, bool) {
+	var out strings.Builder
+
+	var high rune
+
+	for i := 0; i < len(body); {
+		if body[i] != escape || strings.HasPrefix(body[i+1:], string(escape)) {
+			if high != 0 {
+				return "", false
+			}
+
+			out.WriteByte(body[i])
+
+			if body[i] == escape {
+				i++
+			}
+
+			i++
+
+			continue
+		}
+
+		at := i + 1
+		size := 4
+
+		if strings.HasPrefix(body[at:], "+") {
+			at++
+			size = 6
+		}
+
+		if at+size > len(body) {
+			return "", false
+		}
+
+		code, err := strconv.ParseUint(body[at:at+size], 16, 32)
+		if err != nil {
+			return "", false
+		}
+
+		i = at + size
+		r := rune(code)
+
+		switch {
+		case high != 0:
+			r = utf16.DecodeRune(high, r)
+			high = 0
+
+			if r == utf8.RuneError {
+				return "", false
+			}
+		case r >= 0xd800 && r < 0xdc00:
+			high = r
+
+			continue
+		case !utf8.ValidRune(r):
+			return "", false
+		}
+
+		out.WriteRune(r)
+	}
+
+	return out.String(), high == 0
 }
 
 // atomic keeps every index change in the plan's transaction. A plan that

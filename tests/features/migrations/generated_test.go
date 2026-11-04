@@ -9,9 +9,10 @@ import (
 )
 
 // The models below are a badge with a slug at three points in time. The slug
-// has everything that can depend on a column: a unique constraint, a check, a
-// comment, a foreign key from another table, and a unique index that includes
-// it, which a foreign key on the label depends on.
+// has everything that can depend on a column: a unique constraint, two checks,
+// one of which spells its name in Unicode escapes, a comment, a foreign key from
+// another table, and a unique index that includes it, which a foreign key on the
+// label depends on.
 
 // SlugV1 computes its slug from the label.
 type SlugV1 struct {
@@ -25,6 +26,7 @@ func (SlugV1) Configure(b *ant.ModelBuilder[SlugV1]) {
 	b.Column(&S1.Slug).Generated("lower(label)").Unique().Comment("for URLs")
 	b.Index(&S1.Label).Unique().Include(&S1.Slug)
 	b.Check("badges_slug_check", "slug <> ''")
+	b.Check("badges_slug_length_check", `length(U&"sl\0075g") < 100`)
 }
 
 // SlugV2 trims the label too.
@@ -39,6 +41,7 @@ func (SlugV2) Configure(b *ant.ModelBuilder[SlugV2]) {
 	b.Column(&S2.Slug).Generated("lower(trim(label))").Unique().Comment("for URLs")
 	b.Index(&S2.Label).Unique().Include(&S2.Slug)
 	b.Check("badges_slug_check", "slug <> ''")
+	b.Check("badges_slug_length_check", `length(U&"sl\0075g") < 100`)
 }
 
 // SlugV3 stores its slug, so it can be edited.
@@ -53,6 +56,7 @@ func (SlugV3) Configure(b *ant.ModelBuilder[SlugV3]) {
 	b.Column(&S3.Slug).Unique().Comment("for URLs")
 	b.Index(&S3.Label).Unique().Include(&S3.Slug)
 	b.Check("badges_slug_check", "slug <> ''")
+	b.Check("badges_slug_length_check", `length(U&"sl\0075g") < 100`)
 }
 
 // Award refers to a badge by its slug, and by its label.
@@ -132,6 +136,12 @@ func TestGeneratedColumnChanges(t *testing.T) {
 				t,
 				text,
 				`CREATE UNIQUE INDEX "badges_label_idx" ON "badges" ("label") INCLUDE ("slug");`,
+			)
+
+			require.Contains(
+				t,
+				text,
+				`ALTER TABLE "badges" ADD CONSTRAINT "badges_slug_length_check" CHECK (length(U&"sl\0075g") < 100);`,
 			)
 
 			require.Contains(t, text, `COMMENT ON COLUMN "badges"."slug"`)

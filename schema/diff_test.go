@@ -362,6 +362,60 @@ func TestReplacedColumns(t *testing.T) {
 			`ALTER TABLE "odd" ADD CONSTRAINT "odd_check" CHECK ("a""b" <> '')`,
 		)
 	})
+
+	t.Run("a name spelled in Unicode escapes is found", func(t *testing.T) {
+		escaped := func(expr string) *schema.Table {
+			return &schema.Table{
+				Name: "tags",
+				Columns: []*schema.Column{
+					{Name: "label", Type: "text"},
+					{Name: "slug", Type: "text", Generated: expr},
+					{Name: "🐌", Type: "text", Generated: expr},
+				},
+				// One way each to write an escape, around a string that looks
+				// like one, and with an escape letter that the name has too.
+				Checks: []*schema.Check{
+					{Name: "tags_slug_check", Expr: `'U&"' <> U&"sl\0075g"`},
+					{Name: "tags_case_check", Expr: `U&"slL0075g" UESCAPE 'L' <> ''`},
+					{Name: "tags_snail_check", Expr: `U&"\D83D\DC0C" <> ''`},
+				},
+				Indexes: []*schema.Index{
+					{
+						Name: "tags_lower_idx",
+						Parts: []schema.IndexPart{
+							{Expr: `lower(U&"sl!0075g" /* any escape */ UESCAPE '!')`},
+						},
+					},
+					{
+						Name:  "tags_label_idx",
+						Parts: []schema.IndexPart{{Column: "label"}},
+						Where: `u&"s\+00006Cug" IS NOT NULL`,
+					},
+				},
+			}
+		}
+
+		require.Equal(
+			t,
+			[]string{
+				`ALTER TABLE "tags" DROP CONSTRAINT "tags_slug_check"`,
+				`ALTER TABLE "tags" DROP CONSTRAINT "tags_case_check"`,
+				`ALTER TABLE "tags" DROP CONSTRAINT "tags_snail_check"`,
+				`DROP INDEX "tags_lower_idx"`,
+				`DROP INDEX "tags_label_idx"`,
+				`ALTER TABLE "tags" DROP COLUMN "slug"`,
+				`ALTER TABLE "tags" ADD COLUMN "slug" text NOT NULL GENERATED ALWAYS AS (upper(label)) STORED`,
+				`ALTER TABLE "tags" DROP COLUMN "🐌"`,
+				`ALTER TABLE "tags" ADD COLUMN "🐌" text NOT NULL GENERATED ALWAYS AS (upper(label)) STORED`,
+				`ALTER TABLE "tags" ADD CONSTRAINT "tags_slug_check" CHECK ('U&"' <> U&"sl\0075g")`,
+				`ALTER TABLE "tags" ADD CONSTRAINT "tags_case_check" CHECK (U&"slL0075g" UESCAPE 'L' <> '')`,
+				`ALTER TABLE "tags" ADD CONSTRAINT "tags_snail_check" CHECK (U&"\D83D\DC0C" <> '')`,
+				`CREATE INDEX "tags_lower_idx" ON "tags" ((lower(U&"sl!0075g" /* any escape */ UESCAPE '!')))`,
+				`CREATE INDEX "tags_label_idx" ON "tags" ("label") WHERE u&"s\+00006Cug" IS NOT NULL`,
+			},
+			run(t, of(escaped("lower(label)")), of(escaped("upper(label)"))),
+		)
+	})
 }
 
 // PostgreSQL will not drop a unique key while a foreign key depends on it, so a
