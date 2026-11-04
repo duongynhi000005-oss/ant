@@ -371,10 +371,19 @@ func TestRenderPostgres(t *testing.T) {
 func TestRenderCommentCannotEscape(t *testing.T) {
 	users := &qb.TableRef{Name: "users"}
 	column := []qb.Selected{{Value: qb.Column{Table: users, Name: "age"}}}
+
 	inputs := []string{
-		"/*/", "*/*", "/*/*/", "*//*", "**//", "//**", "* // *",
+		"/*/",
+		"*/*",
+		"/*/*/",
+		"*//*",
+		"**//",
+		"//**",
+		"* // *",
 		"/*/ UNION SELECT password FROM accounts; --",
-		"*/ DROP TABLE users; /*", "/ * */ * /", "///***///",
+		"*/ DROP TABLE users; /*",
+		"/ * */ * /",
+		"///***///",
 	}
 
 	for _, in := range inputs {
@@ -387,8 +396,11 @@ func TestRenderCommentCannotEscape(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if open, close := strings.Count(sql, "/*"), strings.Count(sql, "*/"); open != 1 || close != 1 {
-				t.Errorf("%q rendered %d openers and %d closers: %s", in, open, close, sql)
+			openers := strings.Count(sql, "/*")
+			closers := strings.Count(sql, "*/")
+
+			if openers != 1 || closers != 1 {
+				t.Errorf("%q rendered %d openers and %d closers: %s", in, openers, closers, sql)
 			}
 		}
 	}
