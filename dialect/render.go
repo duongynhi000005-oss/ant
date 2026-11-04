@@ -391,13 +391,27 @@ func (r *renderer) join(j qb.Join) {
 	}
 }
 
+func safeComment(s string) string {
+	var b strings.Builder
+
+	b.Grow(len(s))
+
+	for i := 0; i < len(s); i++ {
+		if i > 0 && (s[i-1] == '/' && s[i] == '*' || s[i-1] == '*' && s[i] == '/') {
+			b.WriteByte(' ')
+		}
+
+		b.WriteByte(s[i])
+	}
+
+	return b.String()
+}
+
 func (r *renderer) selectStmt(s *qb.Select) {
-	// PostgreSQL nests comments, so neither delimiter can stay in the text.
-	safe := strings.NewReplacer("*/", "* /", "/*", "/ *")
 	hint := ""
 
 	if s.Hint != "" {
-		hint = "/*+ " + safe.Replace(s.Hint) + " */ "
+		hint = "/*+ " + safeComment(s.Hint) + " */ "
 	}
 
 	if !r.s.HintInSelect {
@@ -405,7 +419,7 @@ func (r *renderer) selectStmt(s *qb.Select) {
 	}
 
 	if s.Comment != "" {
-		r.write("/* " + safe.Replace(s.Comment) + " */ ")
+		r.write("/* " + safeComment(s.Comment) + " */ ")
 	}
 
 	if len(s.With) > 0 {

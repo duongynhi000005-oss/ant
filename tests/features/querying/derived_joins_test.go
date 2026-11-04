@@ -1,6 +1,7 @@
 package querying
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -206,6 +207,13 @@ func TestHint(t *testing.T) {
 			text, _, err := db.Users.Query().Hint("*/ DROP TABLE users; /*").ToSQL()
 			require.NoError(t, err)
 			require.NotContains(t, text, "*/ DROP")
+		})
+
+		t.Run("or recombine into a delimiter", func(t *testing.T) {
+			text, _, err := db.Users.Query().Hint("/*/ UNION SELECT * FROM users; --").ToSQL()
+			require.NoError(t, err)
+			require.Equal(t, 1, strings.Count(text, "/*"), text)
+			require.Equal(t, 1, strings.Count(text, "*/"), text)
 		})
 	})
 }

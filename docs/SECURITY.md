@@ -11,7 +11,7 @@ This page records a review of ant on 2026-10-31, covering SQL construction, logg
 | Values in queries | Always bound as parameters, in every statement ant writes |
 | Column and table names | Come from struct metadata, never from input, and are quoted |
 | `OrderBy`, `Where`, joins | Take field probes, so a request cannot name a column |
-| Query comments and hints | Comment delimiters are removed, so they cannot close the comment. Covered by a test |
+| Query comments and hints | Every adjacent `*/` and `/*` pair is spaced apart, so no delimiter survives to close or nest the comment, and spacing cannot recombine characters into a new one. Covered by tests |
 | JSON paths in `postgres.JSONText` and `JSONSet` | Bound as a parameter, and each part is quoted, so a key cannot add to the path. Covered by a test |
 | Migration scripts | Identifiers are quoted, and text is escaped. A guarded script picks a dollar quote its content does not hold |
 

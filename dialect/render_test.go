@@ -2,6 +2,7 @@ package dialect_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/skudra-go/ant/dialect/postgres"
@@ -171,6 +172,26 @@ func TestRenderPostgres(t *testing.T) {
 				Lock:    &qb.Lock{Mode: "UPDATE", SkipLocked: true},
 			},
 			`/* tag * / */ SELECT "users"."age" FROM "users" FOR UPDATE SKIP LOCKED`,
+			nil,
+		},
+		{
+			"comment escape by recombination",
+			&qb.Select{
+				Comment: "/*/ SELECT * FROM secrets; --",
+				Columns: selected(age),
+				From:    qb.Source{Table: users},
+			},
+			`/* / * / SELECT * FROM secrets; -- */ SELECT "users"."age" FROM "users"`,
+			nil,
+		},
+		{
+			"hint escape by recombination",
+			&qb.Select{
+				Hint:    "*/* nested",
+				Columns: selected(age),
+				From:    qb.Source{Table: users},
+			},
+			`/*+ * / * nested */ SELECT "users"."age" FROM "users"`,
 			nil,
 		},
 		{
@@ -344,6 +365,44 @@ func TestRenderPostgres(t *testing.T) {
 				t.Errorf("args = %v, want %v", args, c.args)
 			}
 		})
+	}
+}
+
+func TestRenderCommentCannotEscape(t *testing.T) {
+	users := &qb.TableRef{Name: "users"}
+	column := []qb.Selected{{Value: qb.Column{Table: users, Name: "age"}}}
+
+	inputs := []string{
+		"/*/",
+		"*/*",
+		"/*/*/",
+		"*//*",
+		"**//",
+		"//**",
+		"* // *",
+		"/*/ UNION SELECT password FROM accounts; --",
+		"*/ DROP TABLE users; /*",
+		"/ * */ * /",
+		"///***///",
+	}
+
+	for _, in := range inputs {
+		for _, stmt := range []*qb.Select{
+			{Comment: in, Columns: column, From: qb.Source{Table: users}},
+			{Hint: in, Columns: column, From: qb.Source{Table: users}},
+		} {
+			sql, _, err := postgres.Dialect.Render(stmt)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			openers := strings.Count(sql, "/*")
+			closers := strings.Count(sql, "*/")
+
+			if openers != 1 || closers != 1 {
+				t.Errorf("%q rendered %d openers and %d closers: %s", in, openers, closers, sql)
+			}
+		}
 	}
 }
 
