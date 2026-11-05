@@ -19,6 +19,7 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 	posts := &qb.TableRef{Name: "posts"}
 	id := qb.Column{Table: users, Name: "id"}
 	userID := qb.Column{Table: posts, Name: "user_id"}
+	age := qb.Column{Table: users, Name: "age"}
 
 	sel := func(column qb.Expr, from *qb.TableRef, where ...qb.Cond) *qb.Select {
 		return &qb.Select{
@@ -47,7 +48,7 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 			"IN the same table",
 			update(qb.In{Left: id, Sub: ofUsers}),
 			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
-				"SELECT `users`.`id` AS `c1` FROM `users`) AS materialized)",
+				"SELECT `users`.`id` FROM `users`) AS materialized)",
 		},
 		{
 			"IN another table",
@@ -58,14 +59,14 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 			"a read nested in another table's subquery, wrapped once, outside",
 			update(qb.In{Left: id, Sub: sel(userID, posts, qb.In{Left: userID, Sub: ofUsers})}),
 			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
-				"SELECT `posts`.`user_id` AS `c1` FROM `posts` WHERE `posts`.`user_id` IN " +
+				"SELECT `posts`.`user_id` FROM `posts` WHERE `posts`.`user_id` IN " +
 				"(SELECT `users`.`id` FROM `users`)) AS materialized)",
 		},
 		{
 			"EXISTS",
 			&qb.Delete{Table: users, Where: []qb.Cond{qb.Exists{Select: ofUsers, Negate: true}}},
 			"DELETE FROM `users` WHERE NOT EXISTS (" + wrap +
-				"SELECT `users`.`id` AS `c1` FROM `users`) AS materialized)",
+				"SELECT `users`.`id` FROM `users`) AS materialized)",
 		},
 		{
 			"a value in SET",
@@ -73,13 +74,13 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 				Table: users,
 				Set:   []qb.Assignment{{Column: "age", Value: qb.Subquery{Select: ofUsers}}},
 			},
-			"UPDATE `users` SET `age` = (" + wrap + "SELECT `users`.`id` AS `c1` FROM `users`) AS materialized)",
+			"UPDATE `users` SET `age` = (" + wrap + "SELECT `users`.`id` FROM `users`) AS materialized)",
 		},
 		{
 			"a read the table's other spelling names",
 			update(qb.In{Left: id, Sub: sel(id, &qb.TableRef{Schema: "app", Name: "Users"})}),
 			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
-				"SELECT `users`.`id` AS `c1` FROM `app`.`Users`) AS materialized)",
+				"SELECT `users`.`id` FROM `app`.`Users`) AS materialized)",
 		},
 		{
 			"raw SQL that names the table",
@@ -90,7 +91,7 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 				},
 			),
 			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
-				"SELECT `posts`.`user_id` AS `c1` FROM `posts` WHERE (user_id IN (SELECT id FROM USERS))) AS materialized)",
+				"SELECT `posts`.`user_id` FROM `posts` WHERE (user_id IN (SELECT id FROM USERS))) AS materialized)",
 		},
 		{
 			"a filter built at render time",
@@ -103,7 +104,7 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 				}),
 			}),
 			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
-				"SELECT `posts`.`user_id` AS `c1` FROM `posts` WHERE `posts`.`user_id` IN " +
+				"SELECT `posts`.`user_id` FROM `posts` WHERE `posts`.`user_id` IN " +
 				"(SELECT `users`.`id` FROM `users`)) AS materialized)",
 		},
 		{
@@ -144,7 +145,7 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 				},
 			}),
 			"UPDATE `users` SET `age` = ? WHERE (`users`.`id`, `users`.`id`) IN (" + wrap +
-				"SELECT `users`.`id` AS `c1`, `posts`.`id` AS `c2` FROM `users` JOIN `posts` ON " +
+				"SELECT `users`.`id` AS `ant_c1`, `posts`.`id` AS `ant_c2` FROM `users` JOIN `posts` ON " +
 				"`posts`.`user_id` = `users`.`id`) AS materialized)",
 		},
 		{
@@ -157,7 +158,70 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 				},
 			}),
 			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
-				"SELECT `id` AS `c1` FROM `users`) AS materialized)",
+				"SELECT `id` FROM `users`) AS materialized)",
+		},
+		{
+			"a column's own name stays, for HAVING to use",
+			&qb.Update{
+				Table: users,
+				Set: []qb.Assignment{{
+					Column: "age",
+					Value: qb.Subquery{
+						Select: &qb.Select{
+							Columns: []qb.Selected{
+								{
+									Value: qb.Func{Name: "MAX", Args: []qb.Expr{age}},
+									Alias: "oldest",
+								},
+							},
+							From: qb.Source{Table: users},
+							Having: []qb.Cond{
+								qb.Compare{
+									Left:  qb.Column{Name: "oldest"},
+									Op:    qb.OpGt,
+									Right: qb.Param{Value: 28},
+								},
+							},
+						},
+					},
+				}},
+			},
+			"UPDATE `users` SET `age` = (" + wrap + "SELECT MAX(`users`.`age`) AS `oldest` FROM `users` " +
+				"HAVING `oldest` > ?) AS materialized)",
+		},
+		{
+			"a star in EXISTS becomes 1, which names nothing twice",
+			&qb.Delete{
+				Table: users,
+				Where: []qb.Cond{qb.Exists{
+					Select: &qb.Select{
+						Columns: []qb.Selected{{Value: qb.Star{}}},
+						From:    qb.Source{Table: users},
+						Joins: []qb.Join{
+							{
+								Source: qb.Source{Table: posts},
+								On:     []qb.Cond{qb.Compare{Left: userID, Op: qb.OpEq, Right: id}},
+							},
+						},
+					},
+				}},
+			},
+			"DELETE FROM `users` WHERE EXISTS (" + wrap + "SELECT 1 FROM `users` JOIN `posts` ON " +
+				"`posts`.`user_id` = `users`.`id`) AS materialized)",
+		},
+		{
+			"a star with DISTINCT counts rows by its columns, so it stays",
+			&qb.Delete{
+				Table: users,
+				Where: []qb.Cond{qb.Exists{
+					Select: &qb.Select{
+						Distinct: true,
+						Columns:  []qb.Selected{{Value: qb.Star{}}},
+						From:     qb.Source{Table: users},
+					},
+				}},
+			},
+			"DELETE FROM `users` WHERE EXISTS (" + wrap + "SELECT DISTINCT * FROM `users`) AS materialized)",
 		},
 		{
 			"a SELECT reads freely",
@@ -192,5 +256,49 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A Lazy condition in a subquery that is wrapped is built once, though the
+// subquery is written twice.
+func TestSelfReadBuildsLazyOnce(t *testing.T) {
+	users := &qb.TableRef{Name: "users"}
+	id := qb.Column{Table: users, Name: "id"}
+	builds := 0
+
+	stmt := &qb.Update{
+		Table: users,
+		Set:   []qb.Assignment{{Column: "age", Value: qb.Param{Value: 1}}},
+		Where: []qb.Cond{qb.In{
+			Left: id,
+			Sub: &qb.Select{
+				Columns: []qb.Selected{{Value: id}},
+				From:    qb.Source{Table: users},
+				Where: []qb.Cond{qb.Lazy{
+					Build: func(context.Context) (qb.Cond, error) {
+						builds++
+
+						return qb.Compare{
+							Left:  id,
+							Op:    qb.OpGt,
+							Right: qb.Param{Value: builds},
+						}, nil
+					},
+				}},
+			},
+		}},
+	}
+
+	text, args, err := mysql.Dialect.Render(stmt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if builds != 1 {
+		t.Errorf("built %d times", builds)
+	}
+
+	if !strings.Contains(text, "materialized") || len(args) != 2 || args[1] != 1 {
+		t.Errorf("rendered %s with %v", text, args)
 	}
 }

@@ -3,6 +3,7 @@ package dialect
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +62,37 @@ type renderer struct {
 	writing *qb.TableRef
 	read    bool
 	inner   bool
+
+	// lazies records what Lazy conditions built while a subquery was first
+	// written, and replay hands them out again when it is written a second time,
+	// so that each is built once.
+	lazies    []built
+	replay    []built
+	recording bool
+}
+
+// built is what one Lazy condition gave.
+type built struct {
+	cond qb.Cond
+	err  error
+}
+
+// build gives a Lazy condition's result, from a recording if there is one.
+func (r *renderer) build(c qb.Lazy) (qb.Cond, error) {
+	if len(r.replay) > 0 {
+		b := r.replay[0]
+		r.replay = r.replay[1:]
+
+		return b.cond, b.err
+	}
+
+	cond, err := c.Build(r.ctx)
+
+	if r.recording {
+		r.lazies = append(r.lazies, built{cond, err})
+	}
+
+	return cond, err
 }
 
 func (r *renderer) fail(kind string, node any) {
@@ -151,7 +183,7 @@ func (r *renderer) expr(e qb.Expr) {
 		r.write(")")
 	case qb.Subquery:
 		r.write("(")
-		r.subquery(e.Select)
+		r.subquery(e.Select, false)
 		r.write(")")
 	case qb.Case:
 		r.write("CASE")
@@ -795,7 +827,7 @@ func (r *renderer) writes(table *qb.TableRef, body func()) {
 // depth, but reads a derived table, which it materializes before writing. So
 // there such a subquery is wrapped in one, and NO_MERGE keeps the optimizer from
 // folding it back in.
-func (r *renderer) subquery(s *qb.Select) {
+func (r *renderer) subquery(s *qb.Select, exists bool) {
 	if r.writing == nil || r.inner {
 		r.selectStmt(s)
 
@@ -804,8 +836,11 @@ func (r *renderer) subquery(s *qb.Select) {
 
 	start, args := r.sql.Len(), len(r.args)
 	r.read, r.inner = false, true
+	r.recording, r.lazies = true, nil
 
 	r.selectStmt(s)
+
+	r.recording = false
 
 	if !r.read {
 		r.inner = false
@@ -813,32 +848,70 @@ func (r *renderer) subquery(s *qb.Select) {
 		return
 	}
 
-	// Written again inside the wrapper, with columns named apart: a derived
-	// table needs unique names, and IN, EXISTS, and a value read by position.
+	// Written again inside the wrapper, with the columns a derived table needs:
+	// unique names, which IN, EXISTS, and a value ignore, as they read by
+	// position.
 	text := r.sql.String()
 	r.sql.Reset()
 	r.sql.WriteString(text[:start])
 	r.args = r.args[:args]
+	r.replay = r.lazies
 
 	r.write("SELECT /*+ NO_MERGE(materialized) */ * FROM (")
-	r.selectStmt(renamed(s))
+	r.selectStmt(derivable(s, exists))
 	r.write(") AS materialized")
 
-	r.inner = false
+	r.inner, r.replay, r.lazies = false, nil, nil
 }
 
-// renamed returns s with its columns named c1, c2, and so on, unless one is a
-// star, which cannot be named.
-func renamed(s *qb.Select) *qb.Select {
+// derivable returns s with columns a derived table takes. A column named like
+// another, or not named, as an expression is not, gets a name of its own, and
+// columns already named keep their names, which the query may refer to. The
+// columns of EXISTS matter to nothing, so a star there, which could name a
+// column twice, becomes 1, unless DISTINCT, a set, or an offset counts rows by
+// them.
+func derivable(s *qb.Select, exists bool) *qb.Select {
 	out := *s
-	out.Columns = make([]qb.Selected, len(s.Columns))
 
-	for i, c := range s.Columns {
-		if _, star := c.Value.(qb.Star); star {
-			return s
+	star := slices.ContainsFunc(s.Columns, func(c qb.Selected) bool {
+		_, ok := c.Value.(qb.Star)
+
+		return ok
+	})
+
+	switch {
+	case star && exists && !s.Distinct && len(s.Sets) == 0 && s.Offset == nil:
+		out.Columns = []qb.Selected{{Value: qb.Fragment{SQL: "1"}}}
+
+		return &out
+	case star:
+		return s
+	}
+
+	natural := func(c qb.Selected) string {
+		if c.Alias != "" {
+			return strings.ToLower(c.Alias)
 		}
 
-		out.Columns[i] = qb.Selected{Value: c.Value, Alias: fmt.Sprintf("c%d", i+1)}
+		if column, ok := c.Value.(qb.Column); ok {
+			return strings.ToLower(column.Name)
+		}
+
+		return ""
+	}
+
+	seen := map[string]int{}
+
+	for _, c := range s.Columns {
+		seen[natural(c)]++
+	}
+
+	out.Columns = slices.Clone(s.Columns)
+
+	for i, c := range out.Columns {
+		if name := natural(c); c.Alias == "" && (name == "" || seen[name] > 1) {
+			out.Columns[i].Alias = fmt.Sprintf("ant_c%d", i+1)
+		}
 	}
 
 	return &out
@@ -962,14 +1035,14 @@ func (r *renderer) cond(c qb.Cond) {
 		}
 
 		r.write("EXISTS (")
-		r.subquery(c.Select)
+		r.subquery(c.Select, true)
 		r.write(")")
 	case qb.Fragment:
 		r.write("(")
 		r.fragment(c)
 		r.write(")")
 	case qb.Lazy:
-		built, err := c.Build(r.ctx)
+		built, err := r.build(c)
 
 		switch {
 		case err != nil:
@@ -1040,7 +1113,7 @@ func (r *renderer) in(c qb.In) {
 
 		r.inner = inner
 	default:
-		r.subquery(c.Sub)
+		r.subquery(c.Sub, false)
 	}
 
 	r.write(")")
