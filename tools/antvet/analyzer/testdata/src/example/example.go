@@ -43,6 +43,51 @@ func (*Pair) Configure(b *ant.ModelBuilder[Pair]) {
 	b.CompositeKey(ant.F(&Pa.A), ant.F(&Pa.B))
 }
 
+// useCode chooses the key at run time, so the analyzer cannot know it.
+var useCode bool
+
+// Branchy sets its key in a branch.
+type Branchy struct { // want Branchy:"key "
+	ID   int64
+	Code string
+}
+
+func (Branchy) Configure(b *ant.ModelBuilder[Branchy]) {
+	if useCode {
+		b.Key(&Br.Code)
+	} else {
+		b.Key(&Br.ID)
+	}
+}
+
+// Helped has its key set by a function given the builder.
+type Helped struct { // want Helped:"key "
+	ID   int64
+	Code string
+}
+
+func (Helped) Configure(b *ant.ModelBuilder[Helped]) { keyOnCode(b) }
+
+func keyOnCode(b *ant.ModelBuilder[Helped]) { b.Key(&He.Code) }
+
+// Ident is embedded in Coded, with a Code of its own.
+type Ident struct{ Code int64 }
+
+// Coded's key is Identity.Code, an integer, not its own Code, a string.
+type Coded struct { // want Coded:"key Identity.Code"
+	ID       int64
+	Code     string
+	Identity Ident
+}
+
+func (Coded) Configure(b *ant.ModelBuilder[Coded]) { b.Key(&Cd.Identity.Code) }
+
+var (
+	Br = ant.Fields[Branchy]() // want Br:"probe of example.Branchy"
+	He = ant.Fields[Helped]()  // want He:"probe of example.Helped"
+	Cd = ant.Fields[Coded]()   // want Cd:"probe of example.Coded"
+)
+
 var (
 	U     = ant.Fields[User]()   // want U:"probe of example.User"
 	P     = ant.Fields[Post]()   // want P:"probe of example.Post"
@@ -85,6 +130,24 @@ func good(
 	countries.Find(ctx, "LV")
 	docs.Find(ctx, "a-slug")
 	pairs.Find(ctx, "anything")
+
+	// GroupBy builds on, so a grouped subquery is still a subquery.
+	users.Where(ant.Exists(posts.Where(ant.Gt(&U.Age, 18)).GroupBy(&P.UserID))).All(ctx)
+}
+
+// A key the analyzer cannot be sure of is not checked, and a nested one is
+// followed to its own field.
+func keys(
+	ctx context.Context,
+	branchy *ant.Table[Branchy],
+	helped *ant.Table[Helped],
+	coded *ant.Table[Coded],
+) {
+	branchy.Find(ctx, "LV")
+	branchy.Find(ctx, 1)
+	helped.Find(ctx, "LV")
+	coded.Find(ctx, int64(7))
+	coded.Find(ctx, "7") // want `Find key is string, and Coded has a key of type int64`
 }
 
 func bad(

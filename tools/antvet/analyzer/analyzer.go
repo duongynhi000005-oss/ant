@@ -31,8 +31,9 @@ var Analyzer = &analysis.Analyzer{
 }
 
 // keyFact records the primary key a model's Configure method sets, which
-// replaces the convention of a field named ID. Field is empty for a key Find
-// cannot take, such as a composite one, or none.
+// replaces the convention of a field named ID. Field is the path to it, such as
+// Identity.Code, and empty when Find cannot take the key, such as a composite
+// one, or when the analyzer cannot be sure which key Configure sets.
 type keyFact struct {
 	Field string
 }
@@ -205,20 +206,89 @@ func findKeys(pass *analysis.Pass) {
 				continue
 			}
 
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-
-				if field, ok := setsKey(pass, call); ok {
-					pass.ExportObjectFact(model.Obj(), &keyFact{Field: field})
-				}
-
-				return true
-			})
+			if field, ok := configuredKey(pass, fn); ok {
+				pass.ExportObjectFact(model.Obj(), &keyFact{Field: field})
+			}
 		}
 	}
+}
+
+// configuredKey reports whether a Configure method sets the key, and the path to
+// it. Only one call, made on every run, says for sure: a key set in a branch,
+// set twice, or perhaps set by a function that is given the builder could be
+// either, so the key is unknown then, and checkFind leaves it alone.
+func configuredKey(pass *analysis.Pass, fn *ast.FuncDecl) (string, bool) {
+	var builder types.Object
+
+	if params := fn.Type.Params.List; len(params) > 0 && len(params[0].Names) > 0 {
+		builder = pass.TypesInfo.Defs[params[0].Names[0]]
+	}
+
+	direct := map[ast.Node]bool{}
+
+	for _, stmt := range fn.Body.List {
+		if expr, ok := stmt.(*ast.ExprStmt); ok {
+			direct[ast.Unparen(expr.X)] = true
+		}
+	}
+
+	var (
+		paths  []string
+		sure   = true
+		passed bool
+	)
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		if field, ok := setsKey(pass, call); ok {
+			paths = append(paths, field)
+			sure = sure && direct[call]
+
+			return true
+		}
+
+		if builder != nil && !isAntFunc(pass, call) &&
+			slices.ContainsFunc(call.Args, func(a ast.Expr) bool {
+				id, ok := ast.Unparen(a).(*ast.Ident)
+
+				return ok && pass.TypesInfo.Uses[id] == builder
+			}) {
+			passed = true
+		}
+
+		return true
+	})
+
+	switch {
+	case len(paths) == 0 && !passed:
+		return "", false
+	case len(paths) == 1 && sure && !passed:
+		return paths[0], true
+	}
+
+	return "", true
+}
+
+// isAntFunc reports whether call is to a function or method of ant.
+func isAntFunc(pass *analysis.Pass, call *ast.CallExpr) bool {
+	var id *ast.Ident
+
+	switch fun := ast.Unparen(indexed(call.Fun)).(type) {
+	case *ast.Ident:
+		id = fun
+	case *ast.SelectorExpr:
+		id = fun.Sel
+	default:
+		return false
+	}
+
+	object, ok := pass.TypesInfo.Uses[id].(*types.Func)
+
+	return ok && object.Pkg() != nil && object.Pkg().Path() == antPath
 }
 
 // receiverType returns the named type a method is declared on.
@@ -259,11 +329,11 @@ func setsKey(pass *analysis.Pass, call *ast.CallExpr) (string, bool) {
 	switch object.Name() {
 	case "Key":
 		if len(call.Args) == 1 {
-			return fieldName(call.Args[0]), true
+			return fieldPath(pass, call.Args[0]), true
 		}
 	case "GenerateKey":
 		if len(call.Args) == 3 {
-			return fieldName(call.Args[1]), true
+			return fieldPath(pass, call.Args[1]), true
 		}
 	case "CompositeKey", "NoKey":
 		return "", true
@@ -284,19 +354,37 @@ func indexed(fun ast.Expr) ast.Expr {
 	return fun
 }
 
-// fieldName returns F of &X.F.
-func fieldName(arg ast.Expr) string {
+// fieldPath returns the path below the probe of &X.A.B, as A.B, so that a field
+// of an embedded struct is not mistaken for a top-level field of the same name.
+func fieldPath(pass *analysis.Pass, arg ast.Expr) string {
 	unary, ok := ast.Unparen(arg).(*ast.UnaryExpr)
 	if !ok {
 		return ""
 	}
 
-	selector, ok := ast.Unparen(unary.X).(*ast.SelectorExpr)
-	if !ok {
-		return ""
+	var names []string
+
+	e := ast.Unparen(unary.X)
+
+	for {
+		selector, ok := e.(*ast.SelectorExpr)
+		if !ok {
+			break
+		}
+
+		names = append([]string{selector.Sel.Name}, names...)
+		e = ast.Unparen(selector.X)
 	}
 
-	return selector.Sel.Name
+	// A probe from another package, as in &models.Co.Code, has the package
+	// and the probe in front.
+	if id, ok := e.(*ast.Ident); ok && len(names) > 0 {
+		if _, isPackage := pass.TypesInfo.Uses[id].(*types.PkgName); isPackage {
+			names = names[1:]
+		}
+	}
+
+	return strings.Join(names, ".")
 }
 
 // probeSource returns the model of an expression that is a probe, or "".
@@ -552,7 +640,8 @@ func (c *checker) checkWhere(call *ast.CallExpr, stack []ast.Node) {
 }
 
 // runs reports whether the chain that the innermost node of stack starts ends in
-// a call that runs the query, which leaves the query types: All, Count, Update.
+// a call that runs the query, which leaves ant's builder types: All, Count,
+// Update. GroupBy and Join lead to other builders, and the chain goes on.
 func (c *checker) runs(stack []ast.Node) bool {
 	node := stack[len(stack)-1]
 
@@ -567,7 +656,7 @@ func (c *checker) runs(stack []ast.Node) bool {
 			return false
 		}
 
-		if queryArg(c.pass.TypesInfo.TypeOf(next)) == nil {
+		if !builder(c.pass.TypesInfo.TypeOf(next)) {
 			return true
 		}
 
@@ -575,6 +664,23 @@ func (c *checker) runs(stack []ast.Node) bool {
 	}
 
 	return false
+}
+
+// builder reports whether t is one of ant's types for building a query, such as
+// *Query[T] or *Grouped, rather than what running one returns.
+func builder(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+
+	t = types.Unalias(t)
+	if pointer, ok := t.(*types.Pointer); ok {
+		t = types.Unalias(pointer.Elem())
+	}
+
+	named, ok := t.(*types.Named)
+
+	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == antPath
 }
 
 // outerModels returns the models of the queries whose Where calls enclose the
@@ -642,10 +748,8 @@ func checkFind(pass *analysis.Pass, call *ast.CallExpr) {
 		return
 	}
 
-	object, _, _ := types.LookupFieldOrMethod(model, true, pass.Pkg, name)
-
-	id, ok := object.(*types.Var)
-	if !ok {
+	id := lookupPath(pass, model, name)
+	if id == nil {
 		return
 	}
 
@@ -661,6 +765,24 @@ func checkFind(pass *analysis.Pass, call *ast.CallExpr) {
 		short(types.TypeString(model, nil)),
 		types.TypeString(id.Type(), nil),
 	)
+}
+
+// lookupPath finds the field at a path such as Identity.Code, or nil.
+func lookupPath(pass *analysis.Pass, t types.Type, path string) *types.Var {
+	var field *types.Var
+
+	for name := range strings.SplitSeq(path, ".") {
+		object, _, _ := types.LookupFieldOrMethod(t, true, pass.Pkg, name)
+
+		v, ok := object.(*types.Var)
+		if !ok {
+			return nil
+		}
+
+		field, t = v, v.Type()
+	}
+
+	return field
 }
 
 func compatible(want, got types.Type) bool {

@@ -19,6 +19,12 @@ func (q *Query[T]) All(ctx context.Context) ([]*T, error)    { return nil, nil }
 func (q *Query[T]) Count(ctx context.Context) (int64, error) { return 0, nil }
 func (q *Query[T]) OrderBy(field any) *Query[T]              { return q }
 
+func (q *Query[T]) GroupBy(field any) *Grouped { return nil }
+
+type Grouped struct{}
+
+func (g *Grouped) Having(c ...Cond) *Grouped { return g }
+
 type Table[T any] struct{}
 
 func (t *Table[T]) Where(c ...Cond) *Query[T] { return nil }
