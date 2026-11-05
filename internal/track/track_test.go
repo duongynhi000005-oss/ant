@@ -373,14 +373,26 @@ func TestUndoAfterALaterChange(t *testing.T) {
 		}
 	})
 
-	t.Run("too late after a delete, the delete stands", func(t *testing.T) {
+	t.Run("loading a relation since does not make it late", func(t *testing.T) {
+		e := New().Track(m, unsafe.Pointer(&row{ID: 2}), Added)
 		undo := e.Saved(Unchanged)
-
-		tr.Track(m, unsafe.Pointer(r), Deleted)
+		e.SetMembers(nil, nil)
+		e.SetParent(nil, int64(1))
 		undo()
 
-		if e.State != Deleted {
-			t.Fatalf("state %s, want Deleted", e.State)
+		if e.State != Added {
+			t.Fatalf("state %s, want Added", e.State)
+		}
+	})
+
+	t.Run("a newer load of the relations stands", func(t *testing.T) {
+		e := New().Track(m, unsafe.Pointer(&row{ID: 3}), Unchanged)
+		undo := e.SetLinks(nil, nil)
+		e.SetMembers(nil, map[any]*Entry{})
+		undo()
+
+		if e.Members == nil {
+			t.Fatal("the rollback took back a newer load")
 		}
 	})
 }

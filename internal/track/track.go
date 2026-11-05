@@ -42,7 +42,8 @@ type Entry struct {
 	id       identity
 	keyed    bool
 	seq      uint64
-	rev      uint64 // counts changes, so an undo can tell it came too late
+	saves    uint64 // counts writes saved, so an undo can tell it came too late
+	loads    uint64 // counts changes to Members and Parents, likewise
 	// Members holds the entries of a loaded one-to-many relation by key, and
 	// Parents the key of a loaded many-to-one relation, to detect changes.
 	Members map[*meta.Relation]map[any]*Entry
@@ -112,7 +113,7 @@ func (e *Entry) Saved(state State) (undo func()) {
 	e.State = state
 	e.Refresh()
 
-	return e.undo(func() { e.State, e.snapshot = oldState, oldSnapshot })
+	return e.undoSave(func() { e.State, e.snapshot = oldState, oldSnapshot })
 }
 
 // SetMembers records the entries a loaded one-to-many relation holds. The maps
@@ -125,7 +126,7 @@ func (e *Entry) SetMembers(r *meta.Relation, members map[any]*Entry) {
 
 	next[r] = members
 	e.Members = next
-	e.rev++
+	e.loads++
 }
 
 // SetParent records the key a loaded many-to-one relation holds.
@@ -137,7 +138,7 @@ func (e *Entry) SetParent(r *meta.Relation, key any) {
 
 	next[r] = key
 	e.Parents = next
-	e.rev++
+	e.loads++
 }
 
 // SetLinks replaces what the loaded relations hold, and returns how to undo that.
@@ -147,31 +148,41 @@ func (e *Entry) SetLinks(
 ) (undo func()) {
 	oldMembers, oldParents := e.Members, e.Parents
 	e.Members, e.Parents = members, parents
+	e.loads++
+	loads := e.loads
 
-	return e.undo(func() { e.Members, e.Parents = oldMembers, oldParents })
+	// A newer load knows better what the relations hold, so it stands.
+	return func() {
+		if e.loads == loads {
+			e.Members, e.Parents = oldMembers, oldParents
+			e.loads = loads - 1
+		}
+	}
 }
 
-// undo returns restore for a rollback, made safe against later changes. A
-// rollback can be reversed late, once another operation has let go of the
-// tracker, and that operation may have changed the entry since. Its change then
-// stands, and an entry it left unchanged becomes Modified: neither write knew
-// what the other left in the database, so the next save writes every column.
+// undoSave returns restore for a rollback of a saved write, made safe against a
+// later one. A rollback can be reversed late, once another operation has let go
+// of the tracker, and that operation may have saved the entry since. Its write
+// then stands, and an entry it left unchanged becomes Modified: neither write
+// knew what the other left in the database, so the next save writes every
+// column. Only saves count: loading a relation, or Add and Remove in memory, do
+// not make a rollback late.
 //
 // Undos run newest first, and each puts the count back to what it was before its
-// change, so the one before it still finds the entry as it left it.
-func (e *Entry) undo(restore func()) func() {
-	e.rev++
-	rev := e.rev
+// write, so the one before it still finds the entry as it left it.
+func (e *Entry) undoSave(restore func()) func() {
+	e.saves++
+	saves := e.saves
 
 	return func() {
 		switch {
-		case e.rev == rev:
+		case e.saves == saves:
 			restore()
 
-			e.rev = rev - 1
+			e.saves = saves - 1
 		case e.State == Unchanged:
 			e.State = Modified
-			e.rev++
+			e.saves++
 		}
 	}
 }
@@ -388,10 +399,6 @@ func (t *Tracker) put(m *meta.Model, entity unsafe.Pointer, state State) *Entry 
 			t.OnState(e, e.State, state)
 		}
 
-		if e.State != state {
-			e.rev++
-		}
-
 		e.State = state
 
 		return e
@@ -407,7 +414,7 @@ func (t *Tracker) Added(m *meta.Model, entity unsafe.Pointer) (undo func()) {
 	e := t.put(m, entity, Unchanged)
 	t.mu.Unlock()
 
-	return e.undo(func() { t.Remove(entity) })
+	return e.undoSave(func() { t.Remove(entity) })
 }
 
 // Rekey records the key of an entity that received one on insert.

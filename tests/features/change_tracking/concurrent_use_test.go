@@ -388,6 +388,31 @@ func TestConcurrentUse(t *testing.T) {
 			require.EqualValues(t, 1, n)
 		})
 
+		// Loading a relation reads, and writes nothing, so a rollback after it
+		// still reverses the insert before it.
+		t.Run("a load after a save does not stop the rollback", func(t *testing.T) {
+			fay := &User{Name: "Fay", Email: "fay.load@example.com"}
+			gus := &User{Name: "Gus", Email: "gus.load@example.com"}
+
+			err := db.Tx(ctx, func(tx *AppDB) error {
+				require.NoError(t, ant.Add(tx, fay))
+				require.NoError(t, tx.SaveChanges(ctx))
+				require.NoError(t, tx.Users.Load(ctx, &U.Posts, fay))
+
+				require.NoError(t, tx.Users.Insert(ctx, gus))
+				require.NoError(t, tx.Users.Load(ctx, &U.Posts, gus))
+
+				return errors.New("roll back")
+			})
+			require.ErrorContains(t, err, "roll back")
+
+			require.Equal(t, ant.Added, ant.Entry(db, fay).State(), "Fay's insert is pending again")
+			require.Equal(t, ant.Detached, ant.Entry(db, gus).State(), "Gus was never stored")
+
+			require.NoError(t, db.SaveChanges(ctx), "so the next save inserts Fay")
+			require.NotZero(t, stored(t, db, fay.ID).ID)
+		})
+
 		t.Run("a session made in a transaction reverses its own tracker", func(t *testing.T) {
 			type opened struct {
 				session *AppDB
