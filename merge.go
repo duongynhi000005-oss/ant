@@ -205,7 +205,7 @@ func versioned(model *meta.Model, actions []qb.MergeAction) ([]qb.MergeAction, e
 			a.Set = append(slices.Clone(a.Set), nextVersion(model))
 		case !a.Matched && len(a.Columns) > 0 && !slices.Contains(a.Columns, v.Column):
 			a.Columns = append(slices.Clone(a.Columns), v.Column)
-			a.Values = append(slices.Clone(a.Values), qb.Param{Value: 1})
+			a.Values = append(slices.Clone(a.Values), one)
 		}
 
 		out[i] = a

@@ -166,6 +166,10 @@ func managedVersion(model *meta.Model, columns []string, set []qb.Assignment) er
 	return nil
 }
 
+// one is a literal 1, which takes no parameter: InsertMany fills a statement
+// with as many rows as the parameter limit allows.
+var one = qb.Fragment{SQL: "1"}
+
 // nextVersion is the assignment that moves the stored version on by one.
 func nextVersion(model *meta.Model) qb.Assignment {
 	v := model.Version
@@ -175,7 +179,7 @@ func nextVersion(model *meta.Model) qb.Assignment {
 		Value: qb.Binary{
 			Left:  qb.Column{Table: model.Table, Name: v.Column},
 			Op:    "+",
-			Right: qb.Param{Value: 1},
+			Right: one,
 		},
 	}
 }

@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,11 +31,21 @@ type ArticlesDB struct {
 	ant.Context
 	Articles  ant.Table[Article]
 	Proposals ant.Table[Proposal]
+	Tallies   ant.Table[Tally]
+}
+
+// Tally has three columns to insert, a third of PostgreSQL's 65535 parameters.
+type Tally struct {
+	ID      int64
+	Name    string `ant:"unique"`
+	Note    string
+	Version int64 `ant:"version"`
 }
 
 var (
 	Ar = ant.Fields[Article]()
 	Pr = ant.Fields[Proposal]()
+	Ta = ant.Fields[Tally]()
 )
 
 const articlesDDL = `
@@ -45,7 +56,13 @@ const articlesDDL = `
 		views INT NOT NULL DEFAULT 0,
 		version BIGINT NOT NULL
 	);
-	CREATE TABLE proposals (id BIGSERIAL PRIMARY KEY, slug TEXT NOT NULL, title TEXT NOT NULL)`
+	CREATE TABLE proposals (id BIGSERIAL PRIMARY KEY, slug TEXT NOT NULL, title TEXT NOT NULL);
+	CREATE TABLE tallies (
+		id BIGSERIAL PRIMARY KEY,
+		name TEXT NOT NULL UNIQUE,
+		note TEXT NOT NULL,
+		version BIGINT NOT NULL
+	)`
 
 // Every write moves the version on, so that a copy loaded before it fails to
 // save. An upsert that updates is such a write: it moves the version on rather
@@ -243,7 +260,44 @@ func TestUpsertKeepsVersions(t *testing.T) {
 			require.ErrorContains(t, err, "Version")
 		})
 
+		// A batch fills every parameter the database takes, so moving the
+		// version on must not take one more.
+		t.Run("a full batch has no parameter to spare", func(t *testing.T) {
+			rows := make([]*Tally, 65535/3)
+
+			for i := range rows {
+				rows[i] = &Tally{Name: fmt.Sprint(i), Note: "n"}
+			}
+
+			conflict := ant.WithConflict(ant.OnConflict(&Ta.Name))
+			_, err := db.Tallies.InsertMany(ctx, rows, conflict, ant.BatchSize(len(rows)))
+			require.NoError(t, err)
+
+			again := make([]*Tally, len(rows))
+
+			for i := range again {
+				again[i] = &Tally{Name: fmt.Sprint(i), Note: "again"}
+			}
+
+			_, err = db.Tallies.InsertMany(ctx, again, conflict, ant.BatchSize(len(rows)))
+			require.NoError(t, err)
+
+			n, err := db.Tallies.Where(ant.Eq(&Ta.Version, int64(2))).Count(ctx)
+			require.NoError(t, err)
+			require.EqualValues(t, len(rows), n)
+		})
+
 		t.Run("Merge counts as a write", func(t *testing.T) {
+			version, err := ant.Raw[int](
+				db,
+				"SELECT current_setting('server_version_num')::int",
+			).First(ctx)
+			require.NoError(t, err)
+
+			if *version < 150000 {
+				t.Skip("MERGE needs PostgreSQL 15")
+			}
+
 			seed(t, "merged")
 
 			holder := ant.Session(db, ant.WithTracking(true))
