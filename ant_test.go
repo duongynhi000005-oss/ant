@@ -107,6 +107,7 @@ func TestBuilderErrorsSurfaceAtTerminal(t *testing.T) {
 		{
 			"non-probe condition",
 			func() error {
+				//antvet:ignore not a probe, on purpose: the test checks the error
 				_, err := users.Where(ant.Gt(&x, 3)).All(ctx)
 
 				return err
@@ -116,6 +117,7 @@ func TestBuilderErrorsSurfaceAtTerminal(t *testing.T) {
 		{
 			"wrong model condition",
 			func() error {
+				//antvet:ignore another model's probe, on purpose: the test checks the error
 				_, err := posts.Where(ant.Gt(&U.Age, 18)).All(ctx)
 
 				return err
@@ -186,6 +188,7 @@ func TestBuilderErrorsSurfaceAtTerminal(t *testing.T) {
 		{
 			"error survives Join",
 			func() error {
+				//antvet:ignore not a probe, on purpose: the test checks the error
 				_, err := posts.Where(ant.Gt(&x, 3)).Join(&P.User).
 					Select(func(p *post, u *user) string { return u.Name }).All(ctx)
 
@@ -196,6 +199,7 @@ func TestBuilderErrorsSurfaceAtTerminal(t *testing.T) {
 		{
 			"error reaches Each",
 			func() error {
+				//antvet:ignore not a probe, on purpose: the test checks the error
 				for _, err := range users.Where(ant.Gt(&x, 3)).Each(ctx) {
 					return err
 				}

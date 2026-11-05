@@ -101,4 +101,8 @@ go install github.com/skudra-go/ant/tools/antvet/cmd/antvet@latest
 go vet -vettool=$(which antvet) ./...
 ```
 
-It reports field pointers that are not probes, probes of the wrong model, and `Find` keys of the wrong type.
+It reports field pointers that are not probes, probes of the wrong model, and `Find` keys of the wrong type, including a key that `Configure` sets with `Key` or `GenerateKey`. A subquery's conditions may name its outer query's model, so a query is judged only where it runs, as in `.All(ctx)`, or inside the query it belongs to. Code that is wrong on purpose, such as a test of the error, says so on its line or the line above:
+
+```go
+_, err := db.Users.Find(ctx, "1") //antvet:ignore the test checks ErrKeyType
+```
