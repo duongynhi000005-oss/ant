@@ -3,9 +3,11 @@ package matrix
 import (
 	"cmp"
 	"errors"
+	"flag"
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/skudra-go/ant"
@@ -44,10 +46,18 @@ func knownFor(name string) *knownFailure {
 }
 
 // checkKnown fails for each entry that matched combinations on this database
-// and saw none of them fail, and resets the counts for the next one.
+// and saw none of them fail, and resets the counts for the next one. A run of
+// some combinations, by -run, may pick only those that pass anyway, so then it
+// says nothing.
 func checkKnown(t *testing.T) {
+	whole := true
+
+	if run := flag.Lookup("test.run"); run != nil && strings.Contains(run.Value.String(), "/") {
+		whole = false
+	}
+
 	for _, k := range known {
-		if k.matched > 0 && k.failed == 0 {
+		if whole && k.matched > 0 && k.failed == 0 {
 			t.Errorf(
 				"%d combinations match %s and all pass: take it out of the known list",
 				k.matched,
@@ -124,10 +134,14 @@ func sameRows(got, want []*Author, all []*Author, o order, p paging) error {
 	case p.limit >= 0 || p.offset > 0:
 		pool := ids(all)
 
+		// Each row of the pool can be returned once.
 		for _, id := range g {
-			if !slices.Contains(pool, id) {
-				return fmt.Errorf("got %v, with %d not among %v", g, id, pool)
+			at := slices.Index(pool, id)
+			if at < 0 {
+				return fmt.Errorf("got %v, with %d not among %v, or twice", g, id, ids(all))
 			}
+
+			pool = slices.Delete(pool, at, at+1)
 		}
 
 		if len(g) != len(wnt) {
@@ -375,16 +389,17 @@ func combination(t *testing.T, db *MatrixDB, w *world, src source, c condition, 
 func refused(t *testing.T, db *MatrixDB, write func(tx *MatrixDB) error) error {
 	var result error
 
-	_ = db.Tx(t.Context(), func(tx *MatrixDB) error {
-		if err := write(
-			tx,
-		); !errors.Is(err, ant.ErrUnsupported) &&
-			!errors.Is(err, ant.ErrNoCondition) {
+	err := db.Tx(t.Context(), func(tx *MatrixDB) error {
+		err := write(tx)
+		if !errors.Is(err, ant.ErrUnsupported) && !errors.Is(err, ant.ErrNoCondition) {
 			result = fmt.Errorf("got %v, want ErrUnsupported", err)
 		}
 
 		return errRollback
 	})
+	if err != nil && !errors.Is(err, errRollback) {
+		return err
+	}
 
 	return result
 }
