@@ -109,6 +109,13 @@ func (t *Table[T]) insert(ctx context.Context, entities []*T, related bool) erro
 		return err
 	}
 
+	ctx, release, err := t.state.claim(ctx, t.state.settings.tracking)
+	if err != nil {
+		return err
+	}
+
+	defer release()
+
 	u := newUnit(t.state)
 
 	for _, e := range entities {
@@ -246,6 +253,13 @@ func (t *Table[T]) Reload(ctx context.Context, e *T) error {
 	if e == nil {
 		return ErrNilEntity
 	}
+
+	ctx, release, err := t.state.claim(ctx, t.state.settings.tracking)
+	if err != nil {
+		return err
+	}
+
+	defer release()
 
 	q := t.query().WithDeleted()
 	q.where = keyConditions(model, unsafe.Pointer(e))

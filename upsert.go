@@ -192,6 +192,13 @@ func (t *Table[T]) Upsert(ctx context.Context, e *T, conflict *Conflict) (bool, 
 		return false, fmt.Errorf("%w: %s", ErrReadOnly, model.Type.Name())
 	}
 
+	ctx, release, err := t.state.claim(ctx, t.state.settings.tracking)
+	if err != nil {
+		return false, err
+	}
+
+	defer release()
+
 	n := &node{model: model, entity: unsafe.Pointer(e)}
 	newUnit(t.state).stamp(n)
 

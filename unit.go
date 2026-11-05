@@ -1418,6 +1418,13 @@ func (c *Context) SaveChanges(ctx context.Context) error {
 		return ErrNotOpen
 	}
 
+	ctx, release, err := s.claim(ctx, true)
+	if err != nil {
+		return err
+	}
+
+	defer release()
+
 	s.saving.Lock()
 	defer s.saving.Unlock()
 

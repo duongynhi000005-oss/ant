@@ -75,6 +75,26 @@ type sharedState struct {
 	nextReplica atomic.Uint64
 }
 
+// claimed marks a context.Context as inside an operation that holds a tracker.
+type claimed struct{}
+
+// claim reserves s's tracker for one operation, if on, and returns the
+// context.Context to run it with. Another goroutine's operation on the same
+// tracker gets ErrConcurrentUse rather than sharing entities with this one. A
+// call made through the returned context, such as a hook's query or an
+// include's, belongs to this operation and shares the claim.
+func (s *state) claim(ctx context.Context, on bool) (context.Context, func(), error) {
+	if !on || ctx.Value(claimed{}) == s.tracker {
+		return ctx, func() {}, nil
+	}
+
+	if !s.tracker.Claim() {
+		return ctx, nil, ErrConcurrentUse
+	}
+
+	return context.WithValue(ctx, claimed{}, s.tracker), s.tracker.Release, nil
+}
+
 func (c *Context) context() *Context { return c }
 
 // Handle is any value that embeds Context, such as a *AppDB.

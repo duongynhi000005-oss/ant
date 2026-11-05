@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/skudra-go/ant/internal/meta"
@@ -121,6 +122,7 @@ type identity struct {
 // use, but an entity should not change while SaveChanges reads it.
 type Tracker struct {
 	mu      sync.Mutex
+	busy    atomic.Bool
 	seq     uint64
 	entries map[unsafe.Pointer]*Entry
 	first   map[identity]*Entry
@@ -129,6 +131,14 @@ type Tracker struct {
 	OnTrack func(*Entry)
 	OnState func(e *Entry, from, to State)
 }
+
+// Claim reserves the tracker for one operation, and reports false if another
+// holds it. Operations that load into the tracker or save from it write into
+// the entities it holds, so two at once would write into the same ones.
+func (t *Tracker) Claim() bool { return t.busy.CompareAndSwap(false, true) }
+
+// Release ends the operation that claimed the tracker.
+func (t *Tracker) Release() { t.busy.Store(false) }
 
 // New returns an empty tracker.
 func New() *Tracker {
