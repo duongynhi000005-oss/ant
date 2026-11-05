@@ -101,6 +101,16 @@ func utc(v any) any {
 		}
 
 		return value
+	default:
+		// database/sql follows pointers to the value, so ant does too, and a
+		// time found at the end goes on in place of the chain.
+		rv := reflect.ValueOf(v)
+		if rv.Kind() == reflect.Pointer && !rv.IsNil() {
+			switch out := utc(rv.Elem().Interface()); out.(type) {
+			case time.Time, qb.Secret, *qb.Secret:
+				return out
+			}
+		}
 	}
 
 	return v

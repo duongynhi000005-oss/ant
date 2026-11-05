@@ -59,6 +59,11 @@ func TestTimesBindInUTC(t *testing.T) {
 
 	var nilDeleted *pointerDeleted
 
+	pointed := &at
+	nullTime := &sql.NullTime{Time: at, Valid: true}
+
+	var nilPointer *time.Time
+
 	calls := 0
 	other := counted{&calls}
 
@@ -78,6 +83,10 @@ func TestTimesBindInUTC(t *testing.T) {
 		{"a secret keeps its cover", qb.Secret{V: at}, qb.Secret{V: utc}},
 		{"a secret behind a pointer too", &qb.Secret{V: at}, &qb.Secret{V: utc}},
 		{"another Valuer, untouched", other, other},
+		{"**time.Time", &pointed, utc},
+		{"**sql.NullTime", &nullTime, utc},
+		{"a pointer to a nil *time.Time", &nilPointer, &nilPointer},
+		{"**qb.Secret", ptrTo(&qb.Secret{V: at}), &qb.Secret{V: utc}},
 		{"not a time", 42, 42},
 	}
 
@@ -218,3 +227,5 @@ func TestOddValuers(t *testing.T) {
 		t.Errorf("Value ran %d times for two renders", calls)
 	}
 }
+
+func ptrTo[V any](v V) *V { return &v }
