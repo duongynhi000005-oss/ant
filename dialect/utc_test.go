@@ -13,15 +13,23 @@ import (
 	"github.com/skudra-go/ant/qb"
 )
 
-// stamp is a driver.Valuer that holds a time, as ant.DeletedAt does.
-type stamp struct{ at time.Time }
+// deleted is built on sql.Null[time.Time], as ant.DeletedAt is.
+type deleted struct{ sql.Null[time.Time] }
 
-func (s stamp) Value() (driver.Value, error) { return s.at, nil }
+// pointerDeleted has a pointer receiver, so a nil one must stay NULL.
+type pointerDeleted struct{ at time.Time }
 
-// pointerStamp has a pointer receiver, so a nil one must stay NULL.
-type pointerStamp struct{ at time.Time }
+func (s *pointerDeleted) Value() (driver.Value, error) { return s.at, nil }
 
-func (s *pointerStamp) Value() (driver.Value, error) { return s.at, nil }
+// counted is a Valuer that is not a time, such as JSON or an encrypted value. Its
+// Value must run once, in database/sql, not also to look for a time.
+type counted struct{ calls *int }
+
+func (c counted) Value() (driver.Value, error) {
+	*c.calls++
+
+	return "x", nil
+}
 
 // A database without zones gets every time in UTC, whatever holds it, from
 // queries and from raw SQL alike. Other databases get the time as it was.
@@ -32,7 +40,10 @@ func TestTimesBindInUTC(t *testing.T) {
 
 	var nilTime *time.Time
 
-	var nilStamp *pointerStamp
+	var nilDeleted *pointerDeleted
+
+	calls := 0
+	other := counted{&calls}
 
 	cases := []struct {
 		name string
@@ -45,11 +56,19 @@ func TestTimesBindInUTC(t *testing.T) {
 		{"sql.Null", sql.Null[time.Time]{V: at, Valid: true}, utc},
 		{"invalid sql.Null", sql.Null[time.Time]{V: at}, sql.Null[time.Time]{V: at}},
 		{"sql.NullTime", sql.NullTime{Time: at, Valid: true}, utc},
-		{"a Valuer", stamp{at}, utc},
-		{"a nil pointer Valuer", nilStamp, nilStamp},
+		{"a type built on sql.Null", deleted{sql.Null[time.Time]{V: at, Valid: true}}, utc},
+		{"a nil pointer Valuer", nilDeleted, nilDeleted},
 		{"a secret keeps its cover", qb.Secret{V: at}, qb.Secret{V: utc}},
+		{"a secret behind a pointer too", &qb.Secret{V: at}, &qb.Secret{V: utc}},
+		{"another Valuer, untouched", other, other},
 		{"not a time", 42, 42},
 	}
+
+	t.Cleanup(func() {
+		if calls != 0 {
+			t.Errorf("another Valuer's Value ran %d times while binding", calls)
+		}
+	})
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -112,5 +131,43 @@ func same(a, b any) bool {
 		return ok && same(x.V, y.V)
 	}
 
+	if x, ok := a.(*qb.Secret); ok {
+		y, ok := b.(*qb.Secret)
+
+		return ok && same(x.V, y.V)
+	}
+
 	return a == b
+}
+
+// A list in a raw IN expands to one value per element, and each is put in UTC.
+func TestRawListsBindInUTC(t *testing.T) {
+	east := time.FixedZone("UTC+3", 3*60*60)
+	at := time.Date(2026, 1, 2, 15, 4, 5, 0, east)
+
+	for _, args := range [][]any{
+		{[]time.Time{at, at}},
+		{sql.Named("when", []*time.Time{&at, &at})},
+	} {
+		query := "SELECT 1 WHERE t IN (?)"
+
+		if _, ok := args[0].(sql.NamedArg); ok {
+			query = "SELECT 1 WHERE t IN (@when)"
+		}
+
+		_, bound, err := dialect.Bind(sqlserver.Dialect, query, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(bound) != 2 {
+			t.Fatalf("bound %d values", len(bound))
+		}
+
+		for _, b := range bound {
+			if v, ok := b.(time.Time); !ok || v.Location() != time.UTC {
+				t.Errorf("an element bound as %#v", b)
+			}
+		}
+	}
 }

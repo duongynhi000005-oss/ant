@@ -24,11 +24,25 @@ import (
 // per element, and an empty slice becomes NULL. Anywhere else a slice is one
 // value, so = ANY(@ids) passes an array. Text in strings, quoted identifiers,
 // comments, and dollar quotes is left alone, as are operators like @>.
+//
+// On a database whose columns keep no zone, times among the bound values are put
+// in UTC, after lists are expanded, so each element is.
 func Bind(d Dialect, query string, args []any) (string, []any, error) {
-	if SyntaxOf(d).UTCTimes {
-		args = utcArgs(args)
+	text, bound, err := bind(d, query, args)
+	if err != nil || !SyntaxOf(d).UTCTimes {
+		return text, bound, err
 	}
 
+	out := make([]any, len(bound))
+
+	for i, a := range bound {
+		out[i] = utc(a)
+	}
+
+	return text, out, nil
+}
+
+func bind(d Dialect, query string, args []any) (string, []any, error) {
 	named := map[string]any{}
 
 	for _, a := range args {
@@ -49,28 +63,10 @@ func Bind(d Dialect, query string, args []any) (string, []any, error) {
 	return query, args, nil
 }
 
-// utcArgs returns raw arguments with their times in UTC, named ones included.
-func utcArgs(args []any) []any {
-	out := make([]any, len(args))
-
-	for i, a := range args {
-		if n, ok := a.(sql.NamedArg); ok {
-			n.Value = utc(n.Value)
-			out[i] = n
-
-			continue
-		}
-
-		out[i] = utc(a)
-	}
-
-	return out
-}
-
 // utc returns v with its time in UTC, for a database whose columns drop the
 // zone, wherever the time is held: directly, behind a pointer, in sql.Null or
-// sql.NullTime, in a qb.Secret, or behind any driver.Valuer, such as
-// ant.DeletedAt. Anything else, and NULL, comes back as it was.
+// sql.NullTime or a type built on one, such as ant.DeletedAt, or in a qb.Secret,
+// which stays one. Anything else, and NULL, comes back as it was.
 func utc(v any) any {
 	switch t := v.(type) {
 	case time.Time:
@@ -81,9 +77,14 @@ func utc(v any) any {
 		}
 	case qb.Secret:
 		return qb.Secret{V: utc(t.V)}
+	case *qb.Secret:
+		if t != nil {
+			return &qb.Secret{V: utc(t.V)}
+		}
 	case driver.Valuer:
 		// database/sql treats a nil pointer as NULL without calling Value.
-		if rv := reflect.ValueOf(t); rv.Kind() == reflect.Pointer && rv.IsNil() {
+		rv := reflect.ValueOf(t)
+		if rv.Kind() == reflect.Pointer && rv.IsNil() || !holdsTime(rv.Type()) {
 			return v
 		}
 
@@ -95,6 +96,37 @@ func utc(v any) any {
 	}
 
 	return v
+}
+
+var (
+	nullTime   = reflect.TypeFor[sql.NullTime]()
+	nullOfTime = reflect.TypeFor[sql.Null[time.Time]]()
+)
+
+// holdsTime reports whether a Valuer of type t gives a time: sql.NullTime,
+// sql.Null[time.Time], or a struct built on one, such as ant.DeletedAt. Other
+// Valuers, such as JSON or an encrypted value, are left to database/sql, so
+// their Value runs once.
+func holdsTime(t reflect.Type) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	if t == nullTime || t == nullOfTime {
+		return true
+	}
+
+	if t.Kind() != reflect.Struct {
+		return false
+	}
+
+	for i := range t.NumField() {
+		if f := t.Field(i); f.Anonymous && holdsTime(f.Type) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func bindNamed(d Dialect, query string, named map[string]any) (string, []any, error) {
