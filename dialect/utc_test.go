@@ -21,6 +21,23 @@ type pointerDeleted struct{ at time.Time }
 
 func (s *pointerDeleted) Value() (driver.Value, error) { return s.at, nil }
 
+// looped embeds a pointer to itself, which database/sql accepts.
+type looped struct{ *looped }
+
+func (looped) Value() (driver.Value, error) { return "loop", nil }
+
+// overridden is built on sql.NullTime but stores text, counting its calls.
+type overridden struct {
+	sql.NullTime
+	calls *int
+}
+
+func (o overridden) Value() (driver.Value, error) {
+	*o.calls++
+
+	return "text", nil
+}
+
 // counted is a Valuer that is not a time, such as JSON or an encrypted value. Its
 // Value must run once, in database/sql, not also to look for a time.
 type counted struct{ calls *int }
@@ -54,7 +71,7 @@ func TestTimesBindInUTC(t *testing.T) {
 		{"*time.Time", &at, utc},
 		{"nil *time.Time", nilTime, nilTime},
 		{"sql.Null", sql.Null[time.Time]{V: at, Valid: true}, utc},
-		{"invalid sql.Null", sql.Null[time.Time]{V: at}, sql.Null[time.Time]{V: at}},
+		{"invalid sql.Null is NULL", sql.Null[time.Time]{V: at}, nil},
 		{"sql.NullTime", sql.NullTime{Time: at, Valid: true}, utc},
 		{"a type built on sql.Null", deleted{sql.Null[time.Time]{V: at, Valid: true}}, utc},
 		{"a nil pointer Valuer", nilDeleted, nilDeleted},
@@ -169,5 +186,35 @@ func TestRawListsBindInUTC(t *testing.T) {
 				t.Errorf("an element bound as %#v", b)
 			}
 		}
+	}
+}
+
+// A type that embeds itself does not hang binding, and a type built on a time
+// that overrides Value is asked once, and its value goes on.
+func TestOddValuers(t *testing.T) {
+	calls := 0
+
+	for _, d := range []dialect.Dialect{sqlite.Dialect, sqlserver.Dialect} {
+		_, args, err := d.Render(&qb.Select{
+			Columns: []qb.Selected{
+				{Value: qb.Param{Value: looped{}}},
+				{Value: qb.Param{Value: overridden{calls: &calls}}},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, ok := args[0].(looped); !ok {
+			t.Errorf("%s: a looped Valuer became %#v", d.Name(), args[0])
+		}
+
+		if args[1] != "text" {
+			t.Errorf("%s: an overridden Valuer became %#v", d.Name(), args[1])
+		}
+	}
+
+	if calls != 2 {
+		t.Errorf("Value ran %d times for two renders", calls)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -84,19 +85,32 @@ func utc(v any) any {
 	case driver.Valuer:
 		// database/sql treats a nil pointer as NULL without calling Value.
 		rv := reflect.ValueOf(t)
-		if rv.Kind() == reflect.Pointer && rv.IsNil() || !holdsTime(rv.Type()) {
+		if rv.Kind() == reflect.Pointer && rv.IsNil() || !holdsTime(rv.Type(), nil) {
 			return v
 		}
 
-		if value, err := t.Value(); err == nil {
-			if at, ok := value.(time.Time); ok {
-				return at.UTC()
-			}
+		// Value runs once: its result goes on in place of v, so that a type
+		// that overrides Value is not asked twice.
+		value, err := t.Value()
+
+		switch at, ok := value.(time.Time); {
+		case err != nil:
+			return failed{err}
+		case ok:
+			return at.UTC()
 		}
+
+		return value
 	}
 
 	return v
 }
+
+// failed is a Valuer that gives the error another Valuer gave, so that the
+// error reaches database/sql as it would have.
+type failed struct{ err error }
+
+func (f failed) Value() (driver.Value, error) { return nil, f.err }
 
 var (
 	nullTime   = reflect.TypeFor[sql.NullTime]()
@@ -107,21 +121,22 @@ var (
 // sql.Null[time.Time], or a struct built on one, such as ant.DeletedAt. Other
 // Valuers, such as JSON or an encrypted value, are left to database/sql, so
 // their Value runs once.
-func holdsTime(t reflect.Type) bool {
+func holdsTime(t reflect.Type, seen []reflect.Type) bool {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
-	if t == nullTime || t == nullOfTime {
+	switch {
+	case t == nullTime || t == nullOfTime:
 		return true
+	case t.Kind() != reflect.Struct || slices.Contains(seen, t):
+		return false // a type that embeds itself holds no time either
 	}
 
-	if t.Kind() != reflect.Struct {
-		return false
-	}
+	seen = append(seen, t)
 
 	for i := range t.NumField() {
-		if f := t.Field(i); f.Anonymous && holdsTime(f.Type) {
+		if f := t.Field(i); f.Anonymous && holdsTime(f.Type, seen) {
 			return true
 		}
 	}
