@@ -340,7 +340,9 @@ func (t *Table[T]) upsertRows(
 	switch {
 	case err != nil:
 		return nil, err
-	case changed == 0 && len(stmt.Conflict.Set) == 0:
+	// No row changed: the conflict did nothing, or its condition, such as a
+	// copy's version, turned the update down.
+	case changed == 0 && (len(stmt.Conflict.Set) == 0 || len(stmt.Conflict.Where) > 0):
 		return nil, ErrNotFound
 	}
 

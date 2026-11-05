@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/skudra-go/ant"
+	"github.com/skudra-go/ant/dialect"
 	"github.com/skudra-go/ant/tests/features/fixture"
 )
 
@@ -203,6 +204,26 @@ func TestUpsertKeepsVersions(t *testing.T) {
 			require.EqualValues(t, 4, got.Version)
 		})
 
+		// Without RETURNING, the row count tells whether the version let the
+		// update through.
+		t.Run("a stale copy is refused without RETURNING too", func(t *testing.T) {
+			seed(t, "counted")
+
+			plain, err := ant.Wrap[ArticlesDB](noReturning{db.Dialect()}, db.DB())
+			require.NoError(t, err)
+
+			stale := &Article{Slug: "counted", Title: "stale", Version: 2}
+			_, err = plain.Articles.Upsert(ctx, stale, onSlug)
+			require.ErrorIs(t, err, ant.ErrConcurrency)
+			require.Equal(t, "stale", stale.Title, "the copy was not overwritten")
+
+			current := &Article{Slug: "counted", Title: "current", Version: 3}
+			wrote, err := plain.Articles.Upsert(ctx, current, onSlug)
+			require.NoError(t, err)
+			require.True(t, wrote)
+			require.EqualValues(t, 4, current.Version)
+		})
+
 		t.Run("a copy from a later version is refused too", func(t *testing.T) {
 			seed(t, "ahead")
 
@@ -330,3 +351,9 @@ func TestUpsertKeepsVersions(t *testing.T) {
 		})
 	})
 }
+
+// noReturning is a dialect that takes ON CONFLICT with a condition but has no
+// RETURNING, as a custom dialect might.
+type noReturning struct{ dialect.Dialect }
+
+func (noReturning) SupportsReturning() bool { return false }
