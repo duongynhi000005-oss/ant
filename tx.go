@@ -11,16 +11,31 @@ import (
 
 	"github.com/skudra-go/ant/dialect"
 	"github.com/skudra-go/ant/internal/exec"
+	"github.com/skudra-go/ant/internal/track"
 )
 
 // txState is an open transaction, shared by nested Tx calls.
 type txState struct {
 	tx      *sql.Tx
-	s       *state // the state that began it, whose tracker undo changes
 	done    bool
 	depth   int                     // nested savepoints so far, for naming
-	undo    []func()                // tracker changes to reverse on rollback
+	undo    []undoStep              // tracker changes to reverse on rollback
 	pending []func(context.Context) // observers to run after commit
+}
+
+// undoStep reverses one tracker change. A session made inside a transaction has
+// a tracker of its own, so each step names the tracker it changes.
+type undoStep struct {
+	tracker *track.Tracker
+	undo    func()
+}
+
+// onRollback records tracker changes for the transaction to reverse if it rolls
+// back.
+func (s *state) onRollback(undo ...func()) {
+	for _, f := range undo {
+		s.tx.undo = append(s.tx.undo, undoStep{s.tracker, f})
+	}
 }
 
 // committed runs what was waiting for the commit.
@@ -87,7 +102,7 @@ func (s *state) begin(ctx context.Context, o txOptions) (*txState, error) {
 		return nil, err
 	}
 
-	return &txState{tx: tx, s: s}, nil
+	return &txState{tx: tx}, nil
 }
 
 // transact runs write. With several set, it uses a transaction of its own, or
@@ -159,27 +174,44 @@ func (s *state) savepoint(ctx context.Context, body func() error) error {
 	return err
 }
 
-// rollbackTo reverses tracker changes back to mark. They write to tracked
-// entries, so they hold the tracker, and wait for an operation that has it: a
-// rollback cannot be refused. ctx says whether the caller holds it already.
+// rollbackTo reverses tracker changes back to mark, newest first. They write to
+// tracked entries, so each tracker's run while it is claimed: at once if ctx's
+// operation holds it, and otherwise through Tracker.Undo, which never waits.
 func (t *txState) rollbackTo(ctx context.Context, mark int) {
-	undo := t.undo[mark:]
-	if len(undo) == 0 {
-		return
-	}
-
-	if !t.s.holds(ctx) {
-		c := t.s.tracker.AwaitClaim()
-		defer t.s.tracker.Release(c)
-	}
-
-	slices.Reverse(undo)
-
-	for _, f := range undo {
-		f()
-	}
-
+	steps := slices.Clone(t.undo[mark:])
 	t.undo = t.undo[:mark]
+
+	slices.Reverse(steps)
+
+	var trackers []*track.Tracker
+
+	for _, step := range steps {
+		if !slices.Contains(trackers, step.tracker) {
+			trackers = append(trackers, step.tracker)
+		}
+	}
+
+	for _, tracker := range trackers {
+		var work []func()
+
+		for _, step := range steps {
+			if step.tracker == tracker {
+				work = append(work, step.undo)
+			}
+		}
+
+		undo := func() {
+			for _, f := range work {
+				f()
+			}
+		}
+
+		if holding(ctx, tracker) {
+			undo()
+		} else {
+			tracker.Undo(undo)
+		}
+	}
 }
 
 // abort forgets everything the transaction did.

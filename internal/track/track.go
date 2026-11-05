@@ -124,6 +124,7 @@ type Tracker struct {
 	mu      sync.Mutex
 	held    chan struct{} // holds a token while an operation claims the tracker
 	owner   atomic.Pointer[Claim]
+	undo    []func() // rollback work waiting for the claim, under mu
 	seq     uint64
 	entries map[unsafe.Pointer]*Entry
 	first   map[identity]*Entry
@@ -151,13 +152,6 @@ func (t *Tracker) TryClaim() *Claim {
 	}
 }
 
-// AwaitClaim reserves the tracker, waiting for the operation that holds it.
-func (t *Tracker) AwaitClaim() *Claim {
-	t.held <- struct{}{}
-
-	return t.own()
-}
-
 func (t *Tracker) own() *Claim {
 	c := new(Claim)
 	t.owner.Store(c)
@@ -169,10 +163,56 @@ func (t *Tracker) own() *Claim {
 // was released no longer counts, whoever kept it.
 func (t *Tracker) Owns(c *Claim) bool { return c != nil && t.owner.Load() == c }
 
-// Release ends c's hold on the tracker. Releasing it twice does nothing.
+// Release ends c's hold on the tracker, first running any rollback work that
+// waited for it. Releasing it twice does nothing.
 func (t *Tracker) Release(c *Claim) {
-	if t.owner.CompareAndSwap(c, nil) {
+	for t.Owns(c) {
+		t.runUndo()
+
+		t.owner.Store(nil)
 		<-t.held
+
+		// Work queued after runUndo found the tracker held, so it is run here,
+		// unless another operation has the tracker by now and will run it.
+		if !t.hasUndo() {
+			return
+		}
+
+		c = t.TryClaim()
+	}
+}
+
+// Undo runs rollback work that writes to tracked entries. It needs the claim, but
+// a rollback must not wait for one: the operation that holds it may be waiting
+// for the rollback's connection. So if another operation holds the tracker, the
+// work runs when that operation releases it.
+func (t *Tracker) Undo(f func()) {
+	t.mu.Lock()
+	t.undo = append(t.undo, f)
+	t.mu.Unlock()
+
+	if c := t.TryClaim(); c != nil {
+		t.Release(c)
+	}
+}
+
+func (t *Tracker) hasUndo() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return len(t.undo) > 0
+}
+
+// runUndo runs the queued rollback work in order. The work calls back into the
+// tracker, so it runs without the lock.
+func (t *Tracker) runUndo() {
+	t.mu.Lock()
+	work := t.undo
+	t.undo = nil
+	t.mu.Unlock()
+
+	for _, f := range work {
+		f()
 	}
 }
 

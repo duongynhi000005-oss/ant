@@ -1,6 +1,9 @@
 package track
 
 import (
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
@@ -242,5 +245,72 @@ func TestKeyChanged(t *testing.T) {
 
 	if !e.KeyChanged() {
 		t.Error("key change missed")
+	}
+}
+
+// Rollback work runs at once on a free tracker, and otherwise when the operation
+// that holds it lets go, in the order it came.
+func TestUndoWaitsForTheClaim(t *testing.T) {
+	tr := New()
+
+	var ran []int
+
+	tr.Undo(func() { ran = append(ran, 1) })
+
+	if len(ran) != 1 {
+		t.Fatalf("on a free tracker the work runs at once, ran %v", ran)
+	}
+
+	c := tr.TryClaim()
+	tr.Undo(func() { ran = append(ran, 2) })
+	tr.Undo(func() { ran = append(ran, 3) })
+
+	if len(ran) != 1 {
+		t.Fatalf("while held the work waits, ran %v", ran)
+	}
+
+	if tr.TryClaim() != nil {
+		t.Fatal("a second claim succeeded")
+	}
+
+	tr.Release(c)
+	tr.Release(c)
+
+	if fmt.Sprint(ran) != "[1 2 3]" {
+		t.Fatalf("the release ran %v", ran)
+	}
+
+	if c := tr.TryClaim(); c == nil {
+		t.Fatal("the tracker stayed held")
+	} else if tr.Owns(c) {
+		tr.Release(c)
+	}
+}
+
+// However claims and rollbacks interleave, every piece of work runs once.
+func TestUndoUnderContention(t *testing.T) {
+	tr := New()
+
+	var (
+		wg  sync.WaitGroup
+		ran atomic.Int64
+	)
+
+	for range 50 {
+		wg.Go(func() {
+			for range 100 {
+				if c := tr.TryClaim(); c != nil {
+					tr.Release(c)
+				}
+
+				tr.Undo(func() { ran.Add(1) })
+			}
+		})
+	}
+
+	wg.Wait()
+
+	if got := ran.Load(); got != 5000 {
+		t.Fatalf("ran %d of 5000", got)
 	}
 }

@@ -237,13 +237,20 @@ func TestConcurrentUse(t *testing.T) {
 			require.NoError(t, err)
 		})
 
-		t.Run("a rollback waits for the tracker before undoing", func(t *testing.T) {
+		// A rollback reverses what SaveChanges recorded in the tracker. It does
+		// not wait for an operation that holds the tracker, which may be waiting
+		// for the rollback's connection: the operation reverses it on release.
+		t.Run("a rollback reverses the tracker when the tracker is free", func(t *testing.T) {
 			saved, abort := make(chan struct{}), make(chan struct{})
 			finished := make(chan error, 1)
 
+			var carol *User
+
 			go func() {
 				finished <- db.Tx(ctx, func(tx *AppDB) error {
-					carol, err := tx.Users.Where(ant.Eq(&U.Name, "Carol")).First(ctx)
+					var err error
+
+					carol, err = tx.Users.Where(ant.Eq(&U.Name, "Carol")).First(ctx)
 					if err != nil {
 						return err
 					}
@@ -263,29 +270,19 @@ func TestConcurrentUse(t *testing.T) {
 
 			<-saved
 
-			early := false
-
 			err := h.while(t, load, func() {
 				close(abort)
+				require.ErrorContains(t, <-finished, "roll back", "the rollback did not wait")
 
-				select {
-				case <-finished:
-					early = true
-				case <-time.After(100 * time.Millisecond):
-				}
+				require.Equal(
+					t,
+					ant.Unchanged,
+					ant.Entry(db, carol).State(),
+					"not while the load holds the tracker",
+				)
 			})
 			require.NoError(t, err)
 
-			require.False(
-				t,
-				early,
-				"the rollback undid tracked changes while a load held the tracker",
-			)
-
-			require.ErrorContains(t, <-finished, "roll back")
-
-			carol, err := db.Users.Where(ant.Eq(&U.Name, "Carol")).First(ctx)
-			require.NoError(t, err)
 			require.Equal(t, 41, carol.Age, "the entity keeps its change")
 			require.Equal(t, 40, stored(t, db, carol.ID).Age, "the row rolled back")
 
@@ -293,8 +290,136 @@ func TestConcurrentUse(t *testing.T) {
 				t,
 				ant.Modified,
 				ant.Entry(db, carol).State(),
-				"and the tracker knows the change is not saved",
+				"and once the load let go, the tracker knows the change is not saved",
 			)
+		})
+
+		t.Run(
+			"a rollback does not wait for a load that waits for its connection",
+			func(t *testing.T) {
+				one := fixture.Open[AppDB](t, target, ant.WithTracking(true))
+				one.DB().SetMaxOpenConns(1)
+
+				done := make(chan error, 1)
+				dan := &User{Name: "Dan", Email: "dan.tx@example.com"}
+
+				err := one.Tx(ctx, func(tx *AppDB) error {
+					if err := ant.Add(tx, dan); err != nil {
+						return err
+					}
+
+					if err := tx.SaveChanges(ctx); err != nil {
+						return err
+					}
+
+					// This load claims the tracker, then waits for the only connection,
+					// which the transaction holds until it rolls back.
+					go func() {
+						_, err := one.Users.All(ctx)
+						done <- err
+					}()
+
+					time.Sleep(50 * time.Millisecond)
+
+					return errors.New("roll back")
+				})
+				require.ErrorContains(t, err, "roll back")
+
+				select {
+				case err := <-done:
+					require.NoError(t, err)
+				case <-time.After(10 * time.Second):
+					t.Fatal("the load and the rollback waited for each other")
+				}
+
+				require.Equal(
+					t,
+					ant.Added,
+					ant.Entry(one, dan).State(),
+					"once the load let go, the insert is pending again",
+				)
+			},
+		)
+
+		// A session made inside a transaction has its own tracker, and the
+		// rollback reverses that one, after a load on the session lets go of it.
+		t.Run("a session made in a transaction reverses its own tracker", func(t *testing.T) {
+			type opened struct {
+				session *AppDB
+				bob     *User
+			}
+
+			ready, abort := make(chan opened), make(chan struct{})
+			finished := make(chan error, 1)
+
+			go func() {
+				finished <- db.Tx(ctx, func(tx *AppDB) error {
+					session := ant.Session(tx)
+
+					bob, err := session.Users.Where(ant.Eq(&U.Name, "Bob")).First(ctx)
+					if err != nil {
+						return err
+					}
+
+					bob.Age = 99
+
+					if err := session.SaveChanges(ctx); err != nil {
+						return err
+					}
+
+					ready <- opened{session, bob}
+
+					<-abort
+
+					return errors.New("roll back")
+				})
+			}()
+
+			o := <-ready
+
+			_ = h.while(
+				t,
+				func(ctx context.Context) error {
+					_, err := o.session.Users.All(ctx) // fails: its transaction is over
+
+					return err
+				},
+				func() {
+					close(abort)
+					require.ErrorContains(t, <-finished, "roll back")
+
+					require.Equal(
+						t,
+						ant.Unchanged,
+						ant.Entry(o.session, o.bob).State(),
+						"not while the load holds the session's tracker",
+					)
+				},
+			)
+
+			require.Equal(t, ant.Modified, ant.Entry(o.session, o.bob).State())
+		})
+
+		t.Run("a transaction from UseTx reverses the tracker", func(t *testing.T) {
+			raw, err := db.DB().BeginTx(ctx, nil)
+			require.NoError(t, err)
+
+			defer raw.Rollback()
+
+			tx, err := ant.UseTx(db, raw)
+			require.NoError(t, err)
+
+			eve := &User{Name: "Eve", Email: "eve.tx@example.com"}
+
+			err = tx.Tx(ctx, func(inner *AppDB) error {
+				require.NoError(t, ant.Add(inner, eve))
+				require.NoError(t, inner.SaveChanges(ctx))
+
+				return errors.New("roll back to the savepoint")
+			})
+			require.ErrorContains(t, err, "savepoint")
+			require.Equal(t, ant.Added, ant.Entry(db, eve).State(), "the insert is pending again")
+			ant.Detach(db, eve)
 		})
 
 		t.Run("a context that a finished operation gave out claims nothing", func(t *testing.T) {

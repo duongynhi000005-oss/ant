@@ -228,7 +228,7 @@ func (t *Table[T]) Upsert(ctx context.Context, e *T, conflict *Conflict) (bool, 
 		t.state.tracker.Rekey(entry)
 
 		if t.state.tx != nil {
-			t.state.tx.undo = append(t.state.tx.undo, undo)
+			t.state.onRollback(undo)
 		}
 	}
 

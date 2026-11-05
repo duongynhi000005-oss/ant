@@ -216,7 +216,7 @@ func (t *Table[T]) DeleteByID[K comparable](ctx context.Context, key K) error {
 		undo := t.state.tracker.ForgetRow(model, v)
 
 		if t.state.tx != nil {
-			t.state.tx.undo = append(t.state.tx.undo, undo)
+			t.state.onRollback(undo)
 		}
 	}
 

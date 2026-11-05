@@ -81,10 +81,13 @@ type sharedState struct {
 type claimed struct{ tracker *track.Tracker }
 
 // holds reports whether ctx belongs to the operation that holds s's tracker now.
-func (s *state) holds(ctx context.Context) bool {
-	c, _ := ctx.Value(claimed{s.tracker}).(*track.Claim)
+func (s *state) holds(ctx context.Context) bool { return holding(ctx, s.tracker) }
 
-	return s.tracker.Owns(c)
+// holding reports whether ctx belongs to the operation that holds t now.
+func holding(ctx context.Context, t *track.Tracker) bool {
+	c, _ := ctx.Value(claimed{t}).(*track.Claim)
+
+	return t.Owns(c)
 }
 
 // claim reserves s's tracker for one operation, if on, and returns the

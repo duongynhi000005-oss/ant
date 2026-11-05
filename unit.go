@@ -1360,7 +1360,7 @@ func (u *unit) commit() {
 	}
 
 	if u.s.tx != nil {
-		u.s.tx.undo = append(u.s.tx.undo, undo...)
+		u.s.onRollback(undo...)
 	}
 }
 
