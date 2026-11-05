@@ -75,24 +75,41 @@ type sharedState struct {
 	nextReplica atomic.Uint64
 }
 
-// claimed marks a context.Context as inside an operation that holds a tracker.
-type claimed struct{}
+// claimed is the context.Context key for an operation's claim on one tracker.
+// Each tracker has its own key, so a hook that moves between two contexts keeps
+// both claims.
+type claimed struct{ tracker *track.Tracker }
+
+// holds reports whether ctx belongs to the operation that holds s's tracker now.
+func (s *state) holds(ctx context.Context) bool {
+	c, _ := ctx.Value(claimed{s.tracker}).(*track.Claim)
+
+	return s.tracker.Owns(c)
+}
 
 // claim reserves s's tracker for one operation, if on, and returns the
-// context.Context to run it with. Another goroutine's operation on the same
-// tracker gets ErrConcurrentUse rather than sharing entities with this one. A
-// call made through the returned context, such as a hook's query or an
-// include's, belongs to this operation and shares the claim.
+// context.Context to run it with. Another operation on the same tracker gets
+// ErrConcurrentUse rather than sharing entities with this one. A call made
+// through the returned context, such as a hook's query or an include's, belongs
+// to this operation and shares the claim until the operation ends.
 func (s *state) claim(ctx context.Context, on bool) (context.Context, func(), error) {
-	if !on || ctx.Value(claimed{}) == s.tracker {
+	if !on || s.holds(ctx) {
 		return ctx, func() {}, nil
 	}
 
-	if !s.tracker.Claim() {
+	c := s.tracker.TryClaim()
+	if c == nil {
 		return ctx, nil, ErrConcurrentUse
 	}
 
-	return context.WithValue(ctx, claimed{}, s.tracker), s.tracker.Release, nil
+	return context.WithValue(ctx, claimed{s.tracker}, c), func() { s.tracker.Release(c) }, nil
+}
+
+// touchesTracker reports whether a write on s may change tracked entities: with
+// tracking on it tracks what it writes, and with it off, Add and Attach may still
+// have put the entity it writes in the tracker.
+func (s *state) touchesTracker() bool {
+	return s.settings.tracking || !s.tracker.Empty()
 }
 
 func (c *Context) context() *Context { return c }

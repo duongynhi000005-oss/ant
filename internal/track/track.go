@@ -122,7 +122,8 @@ type identity struct {
 // use, but an entity should not change while SaveChanges reads it.
 type Tracker struct {
 	mu      sync.Mutex
-	busy    atomic.Bool
+	held    chan struct{} // holds a token while an operation claims the tracker
+	owner   atomic.Pointer[Claim]
 	seq     uint64
 	entries map[unsafe.Pointer]*Entry
 	first   map[identity]*Entry
@@ -132,17 +133,64 @@ type Tracker struct {
 	OnState func(e *Entry, from, to State)
 }
 
-// Claim reserves the tracker for one operation, and reports false if another
-// holds it. Operations that load into the tracker or save from it write into
-// the entities it holds, so two at once would write into the same ones.
-func (t *Tracker) Claim() bool { return t.busy.CompareAndSwap(false, true) }
+// Claim is one operation's hold on a tracker. Operations that load into the
+// tracker or save from it write into the entities it holds, so two at once would
+// write into the same ones.
+type Claim struct {
+	_ byte // a zero-size value could share its address with another
+}
 
-// Release ends the operation that claimed the tracker.
-func (t *Tracker) Release() { t.busy.Store(false) }
+// TryClaim reserves the tracker for one operation, or returns nil if another
+// holds it.
+func (t *Tracker) TryClaim() *Claim {
+	select {
+	case t.held <- struct{}{}:
+		return t.own()
+	default:
+		return nil
+	}
+}
+
+// AwaitClaim reserves the tracker, waiting for the operation that holds it.
+func (t *Tracker) AwaitClaim() *Claim {
+	t.held <- struct{}{}
+
+	return t.own()
+}
+
+func (t *Tracker) own() *Claim {
+	c := new(Claim)
+	t.owner.Store(c)
+
+	return c
+}
+
+// Owns reports whether c is the claim that holds the tracker now. A claim that
+// was released no longer counts, whoever kept it.
+func (t *Tracker) Owns(c *Claim) bool { return c != nil && t.owner.Load() == c }
+
+// Release ends c's hold on the tracker. Releasing it twice does nothing.
+func (t *Tracker) Release(c *Claim) {
+	if t.owner.CompareAndSwap(c, nil) {
+		<-t.held
+	}
+}
+
+// Empty reports whether nothing is tracked.
+func (t *Tracker) Empty() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return len(t.entries) == 0
+}
 
 // New returns an empty tracker.
 func New() *Tracker {
-	return &Tracker{entries: map[unsafe.Pointer]*Entry{}, first: map[identity]*Entry{}}
+	return &Tracker{
+		held:    make(chan struct{}, 1),
+		entries: map[unsafe.Pointer]*Entry{},
+		first:   map[identity]*Entry{},
+	}
 }
 
 func keyOf(m *meta.Model, entity unsafe.Pointer) (identity, bool) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -48,26 +49,42 @@ func (h *holder) Before(ctx context.Context, _ *ant.Statement) (context.Context,
 func (*holder) After(context.Context, *ant.Statement, ant.Outcome) {}
 
 // while starts op in another goroutine, runs during once op is waiting on the
-// database, then lets op finish and returns its error.
+// database, then lets op finish and returns its error. If during fails the test,
+// op is still let go and waited for, so it cannot run on into the next test.
 func (h *holder) while(t *testing.T, op func(ctx context.Context) error, during func()) error {
 	t.Helper()
 
 	h.mu.Lock()
 	h.started, h.let = make(chan struct{}), make(chan struct{})
+	let := h.let
 	h.mu.Unlock()
 
 	done := make(chan error, 1)
 
 	go func() { done <- op(context.WithValue(t.Context(), hold{}, true)) }()
 
+	finished := false
+
+	defer func() {
+		if !finished {
+			close(let)
+			<-done
+		}
+	}()
+
 	select {
 	case <-h.started:
 	case err := <-done:
+		finished = true
+
 		t.Fatalf("the operation ended before it reached the database: %v", err)
 	}
 
 	during()
-	close(h.let)
+
+	finished = true
+
+	close(let)
 
 	return <-done
 }
@@ -132,6 +149,11 @@ func TestConcurrentUse(t *testing.T) {
 				}},
 				{"Query.Find", func(ctx context.Context) error {
 					_, err := db.Users.Query().Find(ctx, bob.ID)
+
+					return err
+				}},
+				{"Table.Find of a tracked row", func(ctx context.Context) error {
+					_, err := db.Users.Find(ctx, bob.ID)
 
 					return err
 				}},
@@ -215,6 +237,98 @@ func TestConcurrentUse(t *testing.T) {
 			require.NoError(t, err)
 		})
 
+		t.Run("a rollback waits for the tracker before undoing", func(t *testing.T) {
+			saved, abort := make(chan struct{}), make(chan struct{})
+			finished := make(chan error, 1)
+
+			go func() {
+				finished <- db.Tx(ctx, func(tx *AppDB) error {
+					carol, err := tx.Users.Where(ant.Eq(&U.Name, "Carol")).First(ctx)
+					if err != nil {
+						return err
+					}
+
+					carol.Age = 41
+
+					if err := tx.SaveChanges(ctx); err != nil {
+						return err
+					}
+
+					close(saved)
+					<-abort
+
+					return errors.New("roll back")
+				})
+			}()
+
+			<-saved
+
+			early := false
+
+			err := h.while(t, load, func() {
+				close(abort)
+
+				select {
+				case <-finished:
+					early = true
+				case <-time.After(100 * time.Millisecond):
+				}
+			})
+			require.NoError(t, err)
+
+			require.False(
+				t,
+				early,
+				"the rollback undid tracked changes while a load held the tracker",
+			)
+
+			require.ErrorContains(t, <-finished, "roll back")
+
+			carol, err := db.Users.Where(ant.Eq(&U.Name, "Carol")).First(ctx)
+			require.NoError(t, err)
+			require.Equal(t, 41, carol.Age, "the entity keeps its change")
+			require.Equal(t, 40, stored(t, db, carol.ID).Age, "the row rolled back")
+
+			require.Equal(
+				t,
+				ant.Modified,
+				ant.Entry(db, carol).State(),
+				"and the tracker knows the change is not saved",
+			)
+		})
+
+		t.Run("a context that a finished operation gave out claims nothing", func(t *testing.T) {
+			var kept context.Context
+
+			hook := ant.WithInterceptor(keeper{&kept})
+			keeping := fixture.Open[AppDB](
+				t,
+				target,
+				ant.WithTracking(true),
+				hook,
+				ant.WithInterceptor(h),
+			)
+			_, err := keeping.Users.All(ctx)
+			require.NoError(t, err)
+			require.NotNil(t, kept)
+
+			old := kept
+
+			err = h.while(
+				t,
+				func(ctx context.Context) error {
+					_, err := keeping.Users.All(ctx)
+
+					return err
+				},
+				func() {
+					_, err := keeping.Users.All(old)
+					require.ErrorIs(t, err, ant.ErrConcurrentUse)
+				},
+			)
+			require.NoError(t, err)
+		})
+
 		t.Run("work that leaves the tracker alone goes on alongside", func(t *testing.T) {
 			err := h.while(t, load, func() {
 				n, err := db.Users.Count(ctx)
@@ -284,6 +398,92 @@ func TestConcurrentUse(t *testing.T) {
 			require.NoError(t, err, "Chunk lets go between batches")
 			require.Equal(t, 3, seen)
 		})
+	})
+}
+
+// keeper keeps the context.Context of the last statement, as a careless
+// interceptor might.
+type keeper struct{ kept *context.Context }
+
+func (k keeper) Before(ctx context.Context, _ *ant.Statement) (context.Context, error) {
+	*k.kept = ctx
+
+	return ctx, nil
+}
+
+func (keeper) After(context.Context, *ant.Statement, ant.Outcome) {}
+
+// With tracking off, Add and Attach still put entities in the tracker, so a
+// write that may change one of them claims the tracker while it holds any.
+func TestConcurrentUseWithTrackingOff(t *testing.T) {
+	fixture.Each(t, func(t *testing.T, target fixture.Target) {
+		h := new(holder)
+		db := fixture.Open[AppDB](t, target, ant.WithInterceptor(h))
+		ctx := t.Context()
+		alice, bob, _ := fixture.Seed(t, db)
+
+		t.Run("an empty tracker is never claimed", func(t *testing.T) {
+			err := h.while(
+				t,
+				func(ctx context.Context) error {
+					return db.Users.Insert(ctx, &User{Name: "Dan", Email: "dan@example.com"})
+				},
+				func() {
+					require.NoError(
+						t,
+						db.Users.Insert(ctx, &User{Name: "Eve", Email: "eve@example.com"}),
+					)
+
+					require.NoError(t, db.Users.Reload(ctx, &User{Base: ant.Base{ID: bob.ID}}))
+
+					require.NoError(
+						t,
+						db.Users.Load(ctx, &U.Posts, &User{Base: ant.Base{ID: bob.ID}}),
+					)
+				},
+			)
+			require.NoError(t, err)
+		})
+
+		require.NoError(t, ant.Attach(db, alice))
+
+		ops := []struct {
+			name string
+			op   func(ctx context.Context) error
+		}{
+			{"Insert", func(ctx context.Context) error {
+				return db.Users.Insert(ctx, &User{Name: "Fay", Email: "fay@example.com"})
+			}},
+			{"Upsert", func(ctx context.Context) error {
+				_, err := db.Users.Upsert(
+					ctx,
+					&User{Name: "Gus", Email: "gus@example.com"},
+					ant.OnConflict(&U.Email).DoNothing(),
+				)
+
+				return err
+			}},
+			{"Reload", func(ctx context.Context) error { return db.Users.Reload(ctx, alice) }},
+			{"Load", func(ctx context.Context) error {
+				return db.Users.Load(ctx, &U.Posts, alice)
+			}},
+			{"SaveChanges", db.SaveChanges},
+		}
+
+		for _, tt := range ops {
+			t.Run("with an attached entity: "+tt.name, func(t *testing.T) {
+				alice.Age++
+
+				err := h.while(t, db.SaveChanges, func() {
+					require.ErrorIs(t, tt.op(ctx), ant.ErrConcurrentUse)
+
+					users, err := db.Users.All(ctx)
+					require.NoError(t, err, "an untracked read claims nothing")
+					require.Len(t, users, 5)
+				})
+				require.NoError(t, err)
+			})
+		}
 	})
 }
 
@@ -486,15 +686,20 @@ func (n *Note) AfterLoad(ctx context.Context) error { return runNoteHook(ctx) }
 
 func (n *Note) BeforeUpdate(ctx context.Context) error { return runNoteHook(ctx) }
 
-// inHook marks a hook's own queries, whose notes would run the hook again.
-type inHook struct{}
+// running is set while noteHook runs, so the notes its own queries load do not
+// run it again, unless reentrant lets them.
+var running, reentrant bool
 
 func runNoteHook(ctx context.Context) error {
-	if noteHook == nil || ctx.Value(inHook{}) != nil {
+	if noteHook == nil || running && !reentrant {
 		return nil
 	}
 
-	return noteHook(context.WithValue(ctx, inHook{}, true))
+	running = true
+
+	defer func() { running = false }()
+
+	return noteHook(ctx)
 }
 
 // NotesDB is a context for Note.
@@ -530,6 +735,35 @@ func TestConcurrentUseInHooks(t *testing.T) {
 			notes[0].Author = "anne"
 
 			require.NoError(t, db.SaveChanges(ctx), "BeforeUpdate inside SaveChanges")
+		})
+
+		t.Run("through two contexts and back", func(t *testing.T) {
+			session := ant.Session(db)
+			step := 0
+			reentrant = true
+
+			t.Cleanup(func() { reentrant = false })
+
+			noteHook = func(ctx context.Context) error {
+				step++
+
+				switch step {
+				case 1:
+					_, err := session.Notes.All(ctx)
+
+					return err
+				case 2:
+					_, err := db.Notes.All(ctx)
+
+					return err
+				}
+
+				return nil
+			}
+
+			_, err := db.Notes.All(ctx)
+			require.NoError(t, err, "db, then the session, then db again")
+			require.Greater(t, step, 2)
 		})
 
 		t.Run("with another context", func(t *testing.T) {

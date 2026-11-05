@@ -192,7 +192,7 @@ func (t *Table[T]) Upsert(ctx context.Context, e *T, conflict *Conflict) (bool, 
 		return false, fmt.Errorf("%w: %s", ErrReadOnly, model.Type.Name())
 	}
 
-	ctx, release, err := t.state.claim(ctx, t.state.settings.tracking)
+	ctx, release, err := t.state.claim(ctx, t.state.touchesTracker())
 	if err != nil {
 		return false, err
 	}

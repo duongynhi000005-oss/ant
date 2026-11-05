@@ -562,7 +562,7 @@ func (t *Table[T]) run(ctx context.Context, inc include, entities []*T) error {
 		return err
 	}
 
-	ctx, release, err := t.state.claim(ctx, t.state.settings.tracking)
+	ctx, release, err := t.state.claim(ctx, t.state.touchesTracker())
 	if err != nil {
 		return err
 	}

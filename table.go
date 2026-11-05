@@ -109,7 +109,7 @@ func (t *Table[T]) insert(ctx context.Context, entities []*T, related bool) erro
 		return err
 	}
 
-	ctx, release, err := t.state.claim(ctx, t.state.settings.tracking)
+	ctx, release, err := t.state.claim(ctx, t.state.touchesTracker())
 	if err != nil {
 		return err
 	}
@@ -142,6 +142,13 @@ func (t *Table[T]) Find[K comparable](ctx context.Context, key K) (*T, error) {
 	if err := checkKey[K](field); err != nil {
 		return nil, err
 	}
+
+	ctx, release, err := t.state.claim(ctx, t.state.settings.tracking)
+	if err != nil {
+		return nil, err
+	}
+
+	defer release()
 
 	if t.state.settings.tracking && len(model.Filters) == 0 {
 		if v, ok := meta.KeyValue(key); ok {
@@ -254,7 +261,7 @@ func (t *Table[T]) Reload(ctx context.Context, e *T) error {
 		return ErrNilEntity
 	}
 
-	ctx, release, err := t.state.claim(ctx, t.state.settings.tracking)
+	ctx, release, err := t.state.claim(ctx, t.state.touchesTracker())
 	if err != nil {
 		return err
 	}

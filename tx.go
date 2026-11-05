@@ -16,6 +16,7 @@ import (
 // txState is an open transaction, shared by nested Tx calls.
 type txState struct {
 	tx      *sql.Tx
+	s       *state // the state that began it, whose tracker undo changes
 	done    bool
 	depth   int                     // nested savepoints so far, for naming
 	undo    []func()                // tracker changes to reverse on rollback
@@ -86,7 +87,7 @@ func (s *state) begin(ctx context.Context, o txOptions) (*txState, error) {
 		return nil, err
 	}
 
-	return &txState{tx: tx}, nil
+	return &txState{tx: tx, s: s}, nil
 }
 
 // transact runs write. With several set, it uses a transaction of its own, or
@@ -140,7 +141,7 @@ func (s *state) savepoint(ctx context.Context, body func() error) error {
 	mark, waiting := len(root.undo), len(root.pending)
 
 	if err := body(); err != nil {
-		root.rollbackTo(mark)
+		root.rollbackTo(ctx, mark)
 		root.pending = root.pending[:waiting]
 		// The caller's context may be cancelled, and the transaction must still
 		// return to the savepoint.
@@ -158,9 +159,20 @@ func (s *state) savepoint(ctx context.Context, body func() error) error {
 	return err
 }
 
-// rollbackTo reverses tracker changes back to mark.
-func (t *txState) rollbackTo(mark int) {
+// rollbackTo reverses tracker changes back to mark. They write to tracked
+// entries, so they hold the tracker, and wait for an operation that has it: a
+// rollback cannot be refused. ctx says whether the caller holds it already.
+func (t *txState) rollbackTo(ctx context.Context, mark int) {
 	undo := t.undo[mark:]
+	if len(undo) == 0 {
+		return
+	}
+
+	if !t.s.holds(ctx) {
+		c := t.s.tracker.AwaitClaim()
+		defer t.s.tracker.Release(c)
+	}
+
 	slices.Reverse(undo)
 
 	for _, f := range undo {
@@ -171,8 +183,8 @@ func (t *txState) rollbackTo(mark int) {
 }
 
 // abort forgets everything the transaction did.
-func (t *txState) abort() {
-	t.rollbackTo(0)
+func (t *txState) abort(ctx context.Context) {
+	t.rollbackTo(ctx, 0)
 	t.pending = nil
 	t.done = true
 }
@@ -249,7 +261,7 @@ func runTx[DB any](ctx context.Context, s *state, o txOptions, f func(tx *DB) er
 
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			t.abort()
+			t.abort(ctx)
 			_ = rollback(t.tx)
 
 			panic(recovered)
@@ -257,7 +269,7 @@ func runTx[DB any](ctx context.Context, s *state, o txOptions, f func(tx *DB) er
 	}()
 
 	if err := f(db); err != nil {
-		t.abort()
+		t.abort(ctx)
 
 		return errors.Join(err, rollback(t.tx))
 	}
@@ -265,7 +277,7 @@ func runTx[DB any](ctx context.Context, s *state, o txOptions, f func(tx *DB) er
 	t.done = true
 
 	if err := t.tx.Commit(); err != nil {
-		t.abort()
+		t.abort(ctx)
 
 		return err
 	}
@@ -377,7 +389,7 @@ func (c *Context) Commit() error {
 	t.done = true
 
 	if err := t.tx.Commit(); err != nil {
-		t.abort()
+		t.abort(context.Background())
 
 		return err
 	}
@@ -394,7 +406,7 @@ func (c *Context) Rollback() error {
 		return err
 	}
 
-	t.abort()
+	t.abort(context.Background())
 
 	return rollback(t.tx)
 }
