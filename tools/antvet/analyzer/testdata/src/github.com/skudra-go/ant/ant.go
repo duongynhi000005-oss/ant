@@ -38,8 +38,13 @@ func F[V any](field *V) FieldRef { return FieldRef{} }
 
 type ModelBuilder[T any] struct{}
 
-func (b *ModelBuilder[T]) Table(name string)                          {}
-func (b *ModelBuilder[T]) Key[V any](field *V)                        {}
-func (b *ModelBuilder[T]) CompositeKey(fields ...FieldRef)            {}
-func (b *ModelBuilder[T]) NoKey()                                     {}
+func (b *ModelBuilder[T]) Table(name string)               {}
+func (b *ModelBuilder[T]) Key[V any](field *V) *KeyBuilder { return nil }
+func (b *ModelBuilder[T]) CompositeKey(fields ...FieldRef) {}
+func (b *ModelBuilder[T]) NoKey()                          {}
+
+type KeyBuilder struct{}
+
+func (k *KeyBuilder) NotGenerated() *KeyBuilder { return k }
+
 func GenerateKey[E, V any](b *ModelBuilder[E], field *V, fn func() V) {}

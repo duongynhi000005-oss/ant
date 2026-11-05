@@ -82,6 +82,47 @@ type Coded struct { // want Coded:"key Identity.Code"
 
 func (Coded) Configure(b *ant.ModelBuilder[Coded]) { b.Key(&Cd.Identity.Code) }
 
+// Fluent sets its key in a chain, which runs every time.
+type Fluent struct { // want Fluent:"key Code"
+	ID   int64
+	Code string
+}
+
+func (Fluent) Configure(b *ant.ModelBuilder[Fluent]) { b.Key(&Fl.Code).NotGenerated() }
+
+// Early may return before it sets its key.
+type Early struct { // want Early:"key "
+	ID   int64
+	Code string
+}
+
+func (Early) Configure(b *ant.ModelBuilder[Early]) {
+	if useCode {
+		return
+	}
+
+	b.Key(&Ea.Code)
+}
+
+// Aliased hands its builder on under another name.
+type Aliased struct { // want Aliased:"key "
+	ID   int64
+	Code string
+}
+
+func (Aliased) Configure(b *ant.ModelBuilder[Aliased]) {
+	alias := b
+	keyOnAliased(alias)
+}
+
+func keyOnAliased(b *ant.ModelBuilder[Aliased]) { b.Key(&Al.Code) }
+
+var (
+	Fl = ant.Fields[Fluent]()  // want Fl:"probe of example.Fluent"
+	Ea = ant.Fields[Early]()   // want Ea:"probe of example.Early"
+	Al = ant.Fields[Aliased]() // want Al:"probe of example.Aliased"
+)
+
 var (
 	Br = ant.Fields[Branchy]() // want Br:"probe of example.Branchy"
 	He = ant.Fields[Helped]()  // want He:"probe of example.Helped"
@@ -133,6 +174,15 @@ func good(
 
 	// GroupBy builds on, so a grouped subquery is still a subquery.
 	users.Where(ant.Exists(posts.Where(ant.Gt(&U.Age, 18)).GroupBy(&P.UserID))).All(ctx)
+
+	// A grouped query's model is unknown here, so what sits inside it is not
+	// judged.
+	users.Where(ant.Exists(posts.Where().GroupBy(&P.UserID).Having(
+		ant.Exists(countries.Where(ant.Gt(&P.UserID, int64(0))))))).All(ctx)
+
+	// A query built apart may end up inside another, so it is not judged.
+	middle := users.Where(ant.Exists(posts.Where(ant.Eq(&models.Co.Code, "LV"))))
+	countries.Where(ant.Exists(middle)).All(ctx)
 }
 
 // A key the analyzer cannot be sure of is not checked, and a nested one is
@@ -142,7 +192,16 @@ func keys(
 	branchy *ant.Table[Branchy],
 	helped *ant.Table[Helped],
 	coded *ant.Table[Coded],
+	fluent *ant.Table[Fluent],
+	early *ant.Table[Early],
+	aliased *ant.Table[Aliased],
 ) {
+	fluent.Find(ctx, "LV")
+	fluent.Find(ctx, 1) // want `Find key is int, and Fluent has a key of type string`
+	early.Find(ctx, 1)
+	early.Find(ctx, "LV")
+	aliased.Find(ctx, "LV")
+
 	branchy.Find(ctx, "LV")
 	branchy.Find(ctx, 1)
 	helped.Find(ctx, "LV")
@@ -164,6 +223,7 @@ func bad(
 	ant.Eq(&user.Age, 18) // want `not of an ordinary variable`
 
 	posts.Where(ant.Gt(&U.Age, 18)).All(ctx)                                    // want `condition on User in a query of Post`
+	posts.Where(ant.Gt(&U.Age, 18)).Where(ant.Eq(&P.ID, "x")).All(ctx)          // want `condition on User in a query of Post`
 	posts.Where(ant.Gt(&U.Age, 18)).OrderBy(&P.ID).Count(ctx)                   // want `condition on User in a query of Post`
 	users.Where(ant.Exists(posts.Where(ant.Eq(&models.Co.Code, "x")))).All(ctx) // want `condition on Country in a query of Post`
 	users.Find(ctx, "1")                                                        // want `Find key is string, and User has a key of type int64`

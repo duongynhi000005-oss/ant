@@ -214,9 +214,10 @@ func findKeys(pass *analysis.Pass) {
 }
 
 // configuredKey reports whether a Configure method sets the key, and the path to
-// it. Only one call, made on every run, says for sure: a key set in a branch,
-// set twice, or perhaps set by a function that is given the builder could be
-// either, so the key is unknown then, and checkFind leaves it alone.
+// it. Only one call, made on every run, says for sure: a key set in a branch, in
+// a closure, after a return that may skip it, set twice, or perhaps set by
+// whatever the builder is handed to, could be either, so the key is unknown then,
+// and checkFind leaves it alone.
 func configuredKey(pass *analysis.Pass, fn *ast.FuncDecl) (string, bool) {
 	var builder types.Object
 
@@ -224,49 +225,95 @@ func configuredKey(pass *analysis.Pass, fn *ast.FuncDecl) (string, bool) {
 		builder = pass.TypesInfo.Defs[params[0].Names[0]]
 	}
 
+	// A call runs every time if it heads a statement of the body, or sits in
+	// such a statement's chain, as b.Key(&C.Code).NotGenerated() does.
 	direct := map[ast.Node]bool{}
 
 	for _, stmt := range fn.Body.List {
-		if expr, ok := stmt.(*ast.ExprStmt); ok {
-			direct[ast.Unparen(expr.X)] = true
+		expr, ok := stmt.(*ast.ExprStmt)
+		if !ok {
+			continue
+		}
+
+		for e := ast.Unparen(expr.X); ; {
+			call, ok := e.(*ast.CallExpr)
+			if !ok {
+				break
+			}
+
+			direct[call] = true
+
+			selector, ok := ast.Unparen(indexed(call.Fun)).(*ast.SelectorExpr)
+			if !ok {
+				break
+			}
+
+			e = ast.Unparen(selector.X)
 		}
 	}
 
+	// The builder may be used as a receiver, or handed to ant. Anything else,
+	// such as alias := b or a helper of one's own, could set the key unseen.
+	allowed := map[*ast.Ident]bool{}
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.SelectorExpr:
+			if id, ok := ast.Unparen(n.X).(*ast.Ident); ok {
+				allowed[id] = true
+			}
+		case *ast.CallExpr:
+			if isAntFunc(pass, n) {
+				for _, a := range n.Args {
+					if id, ok := ast.Unparen(a).(*ast.Ident); ok {
+						allowed[id] = true
+					}
+				}
+			}
+		}
+
+		return true
+	})
+
 	var (
-		paths  []string
-		sure   = true
-		passed bool
+		paths   []string
+		sure    = true
+		escaped bool
+		returns bool
 	)
 
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
+		switch n := n.(type) {
+		case *ast.CallExpr:
+			if field, ok := setsKey(pass, n); ok {
+				paths = append(paths, field)
+				sure = sure && direct[n]
+			}
+		case *ast.Ident:
+			if builder != nil && pass.TypesInfo.Uses[n] == builder && !allowed[n] {
+				escaped = true
+			}
 		}
 
-		if field, ok := setsKey(pass, call); ok {
-			paths = append(paths, field)
-			sure = sure && direct[call]
+		return true
+	})
 
-			return true
-		}
-
-		if builder != nil && !isAntFunc(pass, call) &&
-			slices.ContainsFunc(call.Args, func(a ast.Expr) bool {
-				id, ok := ast.Unparen(a).(*ast.Ident)
-
-				return ok && pass.TypesInfo.Uses[id] == builder
-			}) {
-			passed = true
+	// A return in the body, not in a closure, may come before the key is set.
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		switch n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.ReturnStmt:
+			returns = true
 		}
 
 		return true
 	})
 
 	switch {
-	case len(paths) == 0 && !passed:
+	case len(paths) == 0 && !escaped:
 		return "", false
-	case len(paths) == 1 && sure && !passed:
+	case len(paths) == 1 && sure && !escaped && !returns:
 		return paths[0], true
 	}
 
@@ -613,8 +660,8 @@ func (c *checker) checkWhere(call *ast.CallExpr, stack []ast.Node) {
 	allowed := []string{model}
 
 	if !c.runs(stack) {
-		outer := c.outerModels(stack)
-		if len(outer) == 0 {
+		outer, ok := c.outerModels(stack)
+		if !ok {
 			return
 		}
 
@@ -683,28 +730,50 @@ func builder(t types.Type) bool {
 	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == antPath
 }
 
-// outerModels returns the models of the queries whose Where calls enclose the
-// innermost node of stack.
-func (c *checker) outerModels(stack []ast.Node) []string {
-	var out []string
+// outerModels returns the models of the queries that enclose the innermost node
+// of stack, and whether they are the whole scope: only queries it sits in the
+// arguments of count, as a chain's later calls belong to the same query, and an
+// enclosing builder whose model is unknown, such as a grouped query, or a
+// function of one's own, makes the scope unknown. So does an outermost query
+// that does not run where the test can see it, since it may itself be a
+// subquery of something built elsewhere.
+func (c *checker) outerModels(stack []ast.Node) ([]string, bool) {
+	var (
+		out       []string
+		outermost = -1
+	)
 
-	for _, n := range stack[:len(stack)-1] {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
+	for i := len(stack) - 2; i >= 0; i-- {
+		call, ok := stack[i].(*ast.CallExpr)
+		if !ok || !slices.ContainsFunc(call.Args, func(a ast.Expr) bool {
+			return ast.Node(a) == stack[i+1]
+		}) {
 			continue
 		}
 
-		selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-		if !ok || selector.Sel.Name != "Where" {
-			continue
+		if isAntFunc(c.pass, call) && calleeName(c.pass, call) != "" {
+			continue // ant.Exists, ant.SubOf, and the like pass a query on
 		}
 
-		if model := queryModel(c.pass.TypesInfo.TypeOf(selector.X)); model != "" {
-			out = append(out, model)
+		selector, ok := ast.Unparen(indexed(call.Fun)).(*ast.SelectorExpr)
+		if !ok || !isAntFunc(c.pass, call) {
+			return nil, false
 		}
+
+		model := queryModel(c.pass.TypesInfo.TypeOf(selector.X))
+		if model == "" {
+			return nil, false
+		}
+
+		out = append(out, model)
+		outermost = i
 	}
 
-	return out
+	if outermost < 0 || !c.runs(stack[:outermost+1]) {
+		return nil, false
+	}
+
+	return out, true
 }
 
 // joinsLater reports whether the chain goes on to a join, since a condition can
