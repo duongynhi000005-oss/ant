@@ -47,7 +47,7 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 			"IN the same table",
 			update(qb.In{Left: id, Sub: ofUsers}),
 			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
-				"SELECT `users`.`id` FROM `users`) AS materialized)",
+				"SELECT `users`.`id` AS `c1` FROM `users`) AS materialized)",
 		},
 		{
 			"IN another table",
@@ -58,14 +58,14 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 			"a read nested in another table's subquery, wrapped once, outside",
 			update(qb.In{Left: id, Sub: sel(userID, posts, qb.In{Left: userID, Sub: ofUsers})}),
 			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
-				"SELECT `posts`.`user_id` FROM `posts` WHERE `posts`.`user_id` IN " +
+				"SELECT `posts`.`user_id` AS `c1` FROM `posts` WHERE `posts`.`user_id` IN " +
 				"(SELECT `users`.`id` FROM `users`)) AS materialized)",
 		},
 		{
 			"EXISTS",
 			&qb.Delete{Table: users, Where: []qb.Cond{qb.Exists{Select: ofUsers, Negate: true}}},
 			"DELETE FROM `users` WHERE NOT EXISTS (" + wrap +
-				"SELECT `users`.`id` FROM `users`) AS materialized)",
+				"SELECT `users`.`id` AS `c1` FROM `users`) AS materialized)",
 		},
 		{
 			"a value in SET",
@@ -73,13 +73,13 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 				Table: users,
 				Set:   []qb.Assignment{{Column: "age", Value: qb.Subquery{Select: ofUsers}}},
 			},
-			"UPDATE `users` SET `age` = (" + wrap + "SELECT `users`.`id` FROM `users`) AS materialized)",
+			"UPDATE `users` SET `age` = (" + wrap + "SELECT `users`.`id` AS `c1` FROM `users`) AS materialized)",
 		},
 		{
 			"a read the table's other spelling names",
 			update(qb.In{Left: id, Sub: sel(id, &qb.TableRef{Schema: "app", Name: "Users"})}),
 			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
-				"SELECT `users`.`id` FROM `app`.`Users`) AS materialized)",
+				"SELECT `users`.`id` AS `c1` FROM `app`.`Users`) AS materialized)",
 		},
 		{
 			"raw SQL that names the table",
@@ -90,7 +90,7 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 				},
 			),
 			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
-				"SELECT `posts`.`user_id` FROM `posts` WHERE (user_id IN (SELECT id FROM USERS))) AS materialized)",
+				"SELECT `posts`.`user_id` AS `c1` FROM `posts` WHERE (user_id IN (SELECT id FROM USERS))) AS materialized)",
 		},
 		{
 			"a filter built at render time",
@@ -103,7 +103,7 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 				}),
 			}),
 			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
-				"SELECT `posts`.`user_id` FROM `posts` WHERE `posts`.`user_id` IN " +
+				"SELECT `posts`.`user_id` AS `c1` FROM `posts` WHERE `posts`.`user_id` IN " +
 				"(SELECT `users`.`id` FROM `users`)) AS materialized)",
 		},
 		{
@@ -124,6 +124,40 @@ func TestSelfReadsAreWrappedOnMySQL(t *testing.T) {
 			update(qb.Fragment{SQL: "users.age > 1"}, qb.In{Left: id, Sub: ofPosts}),
 			"UPDATE `users` SET `age` = ? WHERE (users.age > 1) AND `users`.`id` IN " +
 				"(SELECT `posts`.`user_id` FROM `posts`)",
+		},
+		{
+			"columns of one name get names of their own",
+			update(qb.In{
+				Left: qb.Row{Values: []qb.Expr{id, id}},
+				Sub: &qb.Select{
+					Columns: []qb.Selected{
+						{Value: id},
+						{Value: qb.Column{Table: posts, Name: "id"}},
+					},
+					From: qb.Source{Table: users},
+					Joins: []qb.Join{
+						{
+							Source: qb.Source{Table: posts},
+							On:     []qb.Cond{qb.Compare{Left: userID, Op: qb.OpEq, Right: id}},
+						},
+					},
+				},
+			}),
+			"UPDATE `users` SET `age` = ? WHERE (`users`.`id`, `users`.`id`) IN (" + wrap +
+				"SELECT `users`.`id` AS `c1`, `posts`.`id` AS `c2` FROM `users` JOIN `posts` ON " +
+				"`posts`.`user_id` = `users`.`id`) AS materialized)",
+		},
+		{
+			"a source named like the table",
+			update(qb.In{
+				Left: id,
+				Sub: &qb.Select{
+					Columns: []qb.Selected{{Value: qb.Column{Name: "id"}}},
+					From:    qb.Source{Name: "users"},
+				},
+			}),
+			"UPDATE `users` SET `age` = ? WHERE `users`.`id` IN (" + wrap +
+				"SELECT `id` AS `c1` FROM `users`) AS materialized)",
 		},
 		{
 			"a SELECT reads freely",

@@ -312,6 +312,11 @@ func (r *renderer) source(s qb.Source) {
 		r.selectStmt(s.Sub)
 		r.write(")")
 	case s.Name != "":
+		// A name may be the written table itself, or a CTE that reads it.
+		if r.writing != nil && strings.EqualFold(s.Name, r.writing.Name) {
+			r.read = true
+		}
+
 		r.quote(s.Name)
 	case s.Raw != nil:
 		r.write("(")
@@ -797,23 +802,46 @@ func (r *renderer) subquery(s *qb.Select) {
 		return
 	}
 
-	start := r.sql.Len()
+	start, args := r.sql.Len(), len(r.args)
 	r.read, r.inner = false, true
 
 	r.selectStmt(s)
 
-	r.inner = false
-
 	if !r.read {
+		r.inner = false
+
 		return
 	}
 
+	// Written again inside the wrapper, with columns named apart: a derived
+	// table needs unique names, and IN, EXISTS, and a value read by position.
 	text := r.sql.String()
 	r.sql.Reset()
 	r.sql.WriteString(text[:start])
+	r.args = r.args[:args]
+
 	r.write("SELECT /*+ NO_MERGE(materialized) */ * FROM (")
-	r.sql.WriteString(text[start:])
+	r.selectStmt(renamed(s))
 	r.write(") AS materialized")
+
+	r.inner = false
+}
+
+// renamed returns s with its columns named c1, c2, and so on, unless one is a
+// star, which cannot be named.
+func renamed(s *qb.Select) *qb.Select {
+	out := *s
+	out.Columns = make([]qb.Selected, len(s.Columns))
+
+	for i, c := range s.Columns {
+		if _, star := c.Value.(qb.Star); star {
+			return s
+		}
+
+		out.Columns[i] = qb.Selected{Value: c.Value, Alias: fmt.Sprintf("c%d", i+1)}
+	}
+
+	return &out
 }
 
 func (r *renderer) merge(s *qb.Merge) {
