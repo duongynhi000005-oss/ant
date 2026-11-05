@@ -727,3 +727,117 @@ func TestConformanceLateralJoin(t *testing.T) {
 		require.Equal(t, []string{"newer"}, newest)
 	})
 }
+
+// A write whose subquery reads the table being written works everywhere. MySQL
+// refuses one (error 1093) unless the read is in a derived table it has
+// materialized, so ant wraps such subqueries there, at any depth.
+func TestConformanceWritesReadingTheirTable(t *testing.T) {
+	testdb.ForEach(t, func(t *testing.T, target testdb.Target) {
+		ctx := t.Context()
+
+		// fresh seeds alice 30, bob 25, carol 35, and a post by carol.
+		fresh := func(t *testing.T) *AppDB {
+			t.Helper()
+
+			app := openApp(t, target)
+			_, err := app.Posts.Unfiltered().Delete(ctx)
+			require.NoError(t, err)
+			_, err = app.Users.Unfiltered().Delete(ctx)
+			require.NoError(t, err)
+
+			users := seedUsers(t, app, "alice", 30, "bob", 25, "carol", 35)
+			require.NoError(t, app.Posts.Insert(ctx, &Post{UserID: users[2].ID, Title: "c"}))
+
+			return app
+		}
+
+		ages := func(t *testing.T, app *AppDB) map[string]int {
+			t.Helper()
+
+			users, err := app.Users.NoTracking().All(ctx)
+			require.NoError(t, err)
+
+			out := map[string]int{}
+
+			for _, u := range users {
+				out[u.Name] = u.Age
+			}
+
+			return out
+		}
+
+		older := func(app *AppDB) ant.Sub[int64] {
+			return ant.SubOf(app.Users.Where(ant.Gt(&U.Age, 28)), &U.ID)
+		}
+
+		t.Run("IN a subquery of the same table", func(t *testing.T) {
+			app := fresh(t)
+			n, err := app.Users.Where(ant.InSub(&U.ID, older(app))).Update(ctx, ant.Inc(&U.Age, 1))
+			require.NoError(t, err)
+			require.EqualValues(t, 2, n)
+			require.Equal(t, map[string]int{"alice": 31, "bob": 25, "carol": 36}, ages(t, app))
+		})
+
+		t.Run("NOT IN, in a delete", func(t *testing.T) {
+			app := fresh(t)
+			n, err := app.Users.Where(ant.NotInSub(&U.ID, older(app))).Delete(ctx)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, n)
+			require.Equal(t, map[string]int{"alice": 30, "carol": 35}, ages(t, app))
+		})
+
+		t.Run("a value from the same table", func(t *testing.T) {
+			app := fresh(t)
+			oldest := ant.SubExpr(app.Users.Query(), ant.Max(&U.Age)).Expr()
+			n, err := app.Users.Where(ant.Eq(&U.Name, "bob")).
+				Update(ctx, ant.SetExpr(&U.Age, oldest))
+			require.NoError(t, err)
+			require.EqualValues(t, 1, n)
+			require.Equal(t, 35, ages(t, app)["bob"])
+		})
+
+		t.Run("a read through another table's subquery", func(t *testing.T) {
+			app := fresh(t)
+			byOlder := app.Posts.Where(
+				ant.EqCol(&P.UserID, &U.ID),
+				ant.InSub(&P.UserID, older(app)),
+			)
+			n, err := app.Users.Where(ant.Exists(byOlder)).Update(ctx, ant.Inc(&U.Age, 1))
+			require.NoError(t, err)
+			require.EqualValues(t, 1, n, "carol, who is older and has a post")
+			require.Equal(t, 36, ages(t, app)["carol"])
+		})
+
+		t.Run("a derived source and a read of the table", func(t *testing.T) {
+			app := fresh(t)
+			n, err := app.Users.Query().
+				From(app.Users.Where(ant.Gt(&U.Age, 20))).
+				Where(ant.InSub(&U.ID, older(app))).
+				Update(ctx, ant.Inc(&U.Age, 1))
+			require.NoError(t, err)
+			require.EqualValues(t, 2, n)
+		})
+
+		t.Run("a limited write and a read of the table", func(t *testing.T) {
+			app := fresh(t)
+			n, err := app.Users.Where(ant.InSub(&U.ID, older(app))).
+				OrderBy(&U.Age).
+				Limit(1).
+				Update(ctx, ant.Inc(&U.Age, 1))
+			require.NoError(t, err)
+			require.EqualValues(t, 1, n)
+			require.Equal(t, 31, ages(t, app)["alice"])
+		})
+
+		t.Run("a correlated read of the same table", func(t *testing.T) {
+			app := fresh(t)
+			younger := ant.SubOf(app.Posts.Where(ant.EqCol(&P.UserID, &U.ID)), &P.UserID)
+			n, err := app.Users.Where(ant.NotInSub(&U.ID, younger)).
+				Where(ant.Lt(&U.Age, 31)).
+				Delete(ctx)
+			require.NoError(t, err)
+			require.EqualValues(t, 2, n, "alice and bob have no post")
+			require.Equal(t, map[string]int{"carol": 35}, ages(t, app))
+		})
+	})
+}

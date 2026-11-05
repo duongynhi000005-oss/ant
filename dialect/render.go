@@ -54,6 +54,13 @@ type renderer struct {
 
 	top          *qb.Select // the statement itself, when it is a SELECT
 	duplicateKey bool       // inside ON DUPLICATE KEY UPDATE
+
+	// writing is the table an UPDATE or DELETE writes, with WrapSelfReads, while
+	// its values and conditions render. read records that a subquery among them
+	// reads it, and inner that one is already being rendered.
+	writing *qb.TableRef
+	read    bool
+	inner   bool
 }
 
 func (r *renderer) fail(kind string, node any) {
@@ -83,6 +90,10 @@ func (r *renderer) bind(v any) {
 }
 
 func (r *renderer) table(t *qb.TableRef) {
+	if r.writing != nil && strings.EqualFold(t.Name, r.writing.Name) {
+		r.read = true
+	}
+
 	if t.Schema != "" {
 		r.quote(t.Schema)
 		r.write(".")
@@ -140,7 +151,7 @@ func (r *renderer) expr(e qb.Expr) {
 		r.write(")")
 	case qb.Subquery:
 		r.write("(")
-		r.selectStmt(e.Select)
+		r.subquery(e.Select)
 		r.write(")")
 	case qb.Case:
 		r.write("CASE")
@@ -252,6 +263,12 @@ func (r *renderer) filtered(f qb.Func) {
 func (r *renderer) fragment(f qb.Fragment) {
 	if f.Needs != "" {
 		r.need(Feature(f.Needs))
+	}
+
+	// Raw SQL cannot be read, so naming the table counts as reading it.
+	if r.writing != nil &&
+		strings.Contains(strings.ToLower(f.SQL), strings.ToLower(r.writing.Name)) {
+		r.read = true
 	}
 
 	args := f.Args
@@ -730,9 +747,13 @@ func (r *renderer) update(s *qb.Update) {
 	r.write("UPDATE ")
 	r.table(s.Table)
 	r.write(" SET ")
-	r.assignments(s.Set)
-	r.output(s.Returning, "INSERTED")
-	r.where(s.Where)
+
+	r.writes(s.Table, func() {
+		r.assignments(s.Set)
+		r.output(s.Returning, "INSERTED")
+		r.where(s.Where)
+	})
+
 	r.returning(s.Returning)
 }
 
@@ -743,9 +764,56 @@ func (r *renderer) delete(s *qb.Delete) {
 
 	r.write("DELETE FROM ")
 	r.table(s.Table)
-	r.output(s.Returning, "DELETED")
-	r.where(s.Where)
+
+	r.writes(s.Table, func() {
+		r.output(s.Returning, "DELETED")
+		r.where(s.Where)
+	})
+
 	r.returning(s.Returning)
+}
+
+// writes renders the values and conditions of a write on table, watching its
+// subqueries for reads of table if the database needs them wrapped.
+func (r *renderer) writes(table *qb.TableRef, body func()) {
+	if r.s.WrapSelfReads {
+		r.writing = table
+
+		defer func() { r.writing = nil }()
+	}
+
+	body()
+}
+
+// subquery writes the SELECT of IN, EXISTS, or a scalar subquery. MySQL refuses
+// an UPDATE or DELETE whose subquery reads the table being written, at any
+// depth, but reads a derived table, which it materializes before writing. So
+// there such a subquery is wrapped in one, and NO_MERGE keeps the optimizer from
+// folding it back in.
+func (r *renderer) subquery(s *qb.Select) {
+	if r.writing == nil || r.inner {
+		r.selectStmt(s)
+
+		return
+	}
+
+	start := r.sql.Len()
+	r.read, r.inner = false, true
+
+	r.selectStmt(s)
+
+	r.inner = false
+
+	if !r.read {
+		return
+	}
+
+	text := r.sql.String()
+	r.sql.Reset()
+	r.sql.WriteString(text[:start])
+	r.write("SELECT /*+ NO_MERGE(materialized) */ * FROM (")
+	r.sql.WriteString(text[start:])
+	r.write(") AS materialized")
 }
 
 func (r *renderer) merge(s *qb.Merge) {
@@ -866,7 +934,7 @@ func (r *renderer) cond(c qb.Cond) {
 		}
 
 		r.write("EXISTS (")
-		r.selectStmt(c.Select)
+		r.subquery(c.Select)
 		r.write(")")
 	case qb.Fragment:
 		r.write("(")
@@ -935,11 +1003,16 @@ func (r *renderer) in(c qb.In) {
 	case c.Sub == nil:
 		list(r, c.Values, r.expr)
 	case c.Sub.Limit != nil && r.s.WrapLimitedIn:
+		inner := r.inner
+		r.inner = true
+
 		r.write("SELECT * FROM (")
 		r.selectStmt(c.Sub)
 		r.write(") AS limited")
+
+		r.inner = inner
 	default:
-		r.selectStmt(c.Sub)
+		r.subquery(c.Sub)
 	}
 
 	r.write(")")
