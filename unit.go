@@ -1338,7 +1338,7 @@ func (u *unit) commit() {
 		switch {
 		case n.remove || entry != nil && n.entity != entry.Entity:
 		case entry != nil && wrote:
-			undo = append(undo, entry.Saved(track.Unchanged))
+			undo = append(undo, tracker.Saved(entry, track.Unchanged))
 
 			if n.insert {
 				tracker.Rekey(entry)

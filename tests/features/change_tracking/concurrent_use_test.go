@@ -413,6 +413,39 @@ func TestConcurrentUse(t *testing.T) {
 			require.NotZero(t, stored(t, db, fay.ID).ID)
 		})
 
+		// Removing an entity after saving it, in a transaction that then rolls
+		// back, still removes it: a new one is forgotten, as its row never was,
+		// and a stored one is deleted by the next save.
+		t.Run("a removal after a save outlives the rollback", func(t *testing.T) {
+			ivy := &User{Name: "Ivy", Email: "ivy.removed@example.com"}
+			require.NoError(t, db.Users.Insert(ctx, ivy))
+
+			hal := &User{Name: "Hal", Email: "hal.removed@example.com"}
+
+			err := db.Tx(ctx, func(tx *AppDB) error {
+				require.NoError(t, ant.Add(tx, hal))
+
+				ivy.Age = 50
+
+				require.NoError(t, tx.SaveChanges(ctx))
+
+				require.NoError(t, ant.Remove(tx, hal))
+				require.NoError(t, ant.Remove(tx, ivy))
+
+				return errors.New("roll back")
+			})
+			require.ErrorContains(t, err, "roll back")
+
+			require.Equal(t, ant.Detached, ant.Entry(db, hal).State())
+			require.Equal(t, ant.Deleted, ant.Entry(db, ivy).State())
+
+			require.NoError(t, db.SaveChanges(ctx))
+
+			n, err := db.Users.Where(ant.In(&U.Email, hal.Email, ivy.Email)).Count(ctx)
+			require.NoError(t, err)
+			require.Zero(t, n, "Hal was never stored, and Ivy is deleted")
+		})
+
 		t.Run("a session made in a transaction reverses its own tracker", func(t *testing.T) {
 			type opened struct {
 				session *AppDB

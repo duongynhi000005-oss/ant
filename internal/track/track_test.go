@@ -413,3 +413,81 @@ func TestRestoreKeepsANewerEntry(t *testing.T) {
 		t.Fatal("the forgotten entry took the address back")
 	}
 }
+
+// A removal asked for after a save outlives the save's rollback.
+func TestRemovalOutlivesRollback(t *testing.T) {
+	m := meta.OfType(reflect.TypeFor[row]())
+
+	t.Run("a new row is forgotten, since it was never stored", func(t *testing.T) {
+		tr := New()
+		r := &row{ID: 1}
+		e := tr.Track(m, unsafe.Pointer(r), Added)
+		undo := tr.Saved(e, Unchanged)
+		tr.Track(m, unsafe.Pointer(r), Deleted)
+		undo()
+
+		if tr.Get(unsafe.Pointer(r)) != nil {
+			t.Fatalf("still tracked as %s", e.State)
+		}
+	})
+
+	t.Run("a stored row stays to be deleted", func(t *testing.T) {
+		tr := New()
+		r := &row{ID: 2}
+		e := tr.Track(m, unsafe.Pointer(r), Modified)
+		undo := tr.Saved(e, Unchanged)
+		tr.Track(m, unsafe.Pointer(r), Deleted)
+		undo()
+
+		if e.State != Deleted {
+			t.Fatalf("state %s, want Deleted", e.State)
+		}
+	})
+
+	t.Run("without a removal, the save is undone", func(t *testing.T) {
+		tr := New()
+		r := &row{ID: 3}
+		e := tr.Track(m, unsafe.Pointer(r), Added)
+		undo := tr.Saved(e, Unchanged)
+		undo()
+
+		if e.State != Added {
+			t.Fatalf("state %s, want Added", e.State)
+		}
+	})
+}
+
+// Rollback work that panics still lets the tracker go.
+func TestPanickingUndoLetsGo(t *testing.T) {
+	tr := New()
+	c := tr.TryClaim()
+	tr.Undo(func() { panic("broken undo") })
+
+	func() {
+		defer func() { _ = recover() }()
+
+		tr.Release(c)
+	}()
+
+	if c := tr.TryClaim(); c == nil {
+		t.Fatal("the tracker stayed held after a panic in Release")
+	} else {
+		tr.Release(c)
+	}
+
+	tr.mu.Lock()
+	tr.undo = append(tr.undo, func() { panic("broken undo") })
+	tr.mu.Unlock()
+
+	func() {
+		defer func() { _ = recover() }()
+
+		tr.TryClaim()
+	}()
+
+	if c := tr.TryClaim(); c == nil {
+		t.Fatal("the tracker stayed held after a panic in a claim")
+	} else {
+		tr.Release(c)
+	}
+}

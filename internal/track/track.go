@@ -231,6 +231,15 @@ func (t *Tracker) TryClaim() *Claim {
 func (t *Tracker) own() *Claim {
 	c := new(Claim)
 	t.owner.Store(c)
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.letGo()
+
+			panic(recovered)
+		}
+	}()
+
 	t.runUndo()
 
 	return c
@@ -241,13 +250,15 @@ func (t *Tracker) own() *Claim {
 func (t *Tracker) Owns(c *Claim) bool { return c != nil && t.owner.Load() == c }
 
 // Release ends c's hold on the tracker, first running any rollback work that
-// waited for it. Releasing it twice does nothing.
+// waited for it. It lets go even if that work panics, so the tracker cannot stay
+// held. Releasing it twice does nothing.
 func (t *Tracker) Release(c *Claim) {
 	for t.Owns(c) {
-		t.runUndo()
+		func() {
+			defer t.letGo()
 
-		t.owner.Store(nil)
-		<-t.held
+			t.runUndo()
+		}()
 
 		// Work queued after runUndo found the tracker held, so it is run here,
 		// unless another operation has the tracker by now and will run it.
@@ -257,6 +268,11 @@ func (t *Tracker) Release(c *Claim) {
 
 		c = t.TryClaim()
 	}
+}
+
+func (t *Tracker) letGo() {
+	t.owner.Store(nil)
+	<-t.held
 }
 
 // Undo runs rollback work that writes to tracked entries. It needs the claim, but
@@ -405,6 +421,28 @@ func (t *Tracker) put(m *meta.Model, entity unsafe.Pointer, state State) *Entry 
 	}
 
 	return t.add(m, entity, state)
+}
+
+// Saved records e as saved in state, and returns how to undo that if the write
+// rolls back. A removal asked for after the save outlives the undo: an entry
+// that was new before it is forgotten, since its row goes with the rollback, and
+// any other stays Deleted, as its row comes back.
+func (t *Tracker) Saved(e *Entry, state State) (undo func()) {
+	restore := e.Saved(state)
+
+	return func() {
+		removed := e.State == Deleted
+
+		restore()
+
+		switch {
+		case !removed:
+		case e.State == Added:
+			t.Forget(e)
+		default:
+			e.State = Deleted
+		}
+	}
 }
 
 // Added tracks a written entity, and returns how to undo that if the write rolls
