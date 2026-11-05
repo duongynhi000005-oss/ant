@@ -287,6 +287,10 @@ func (s *Schema) canRenameTable(t *Table, name string, to *Schema) error {
 		return fmt.Errorf("the snapshot already has a table %s", ref)
 	}
 
+	if slices.Contains(s.Unmanaged, ref) {
+		return fmt.Errorf("a table %s already exists, outside migrations", ref)
+	}
+
 	if to.Table(ref) != nil {
 		return nil
 	}
@@ -294,7 +298,8 @@ func (s *Schema) canRenameTable(t *Table, name string, to *Schema) error {
 	var fresh []string
 
 	for _, candidate := range to.Tables {
-		if candidate.Schema == t.Schema && s.Table(candidate.Ref()) == nil {
+		if candidate.Schema == t.Schema && s.Table(candidate.Ref()) == nil &&
+			!slices.Contains(s.Unmanaged, candidate.Ref()) {
 			fresh = append(fresh, candidate.Name)
 		}
 	}
