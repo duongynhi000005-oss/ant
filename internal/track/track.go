@@ -5,6 +5,7 @@ package track
 
 import (
 	"cmp"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -41,6 +42,7 @@ type Entry struct {
 	id       identity
 	keyed    bool
 	seq      uint64
+	rev      uint64 // counts changes, so an undo can tell it came too late
 	// Members holds the entries of a loaded one-to-many relation by key, and
 	// Parents the key of a loaded many-to-one relation, to detect changes.
 	Members map[*meta.Relation]map[any]*Entry
@@ -110,7 +112,68 @@ func (e *Entry) Saved(state State) (undo func()) {
 	e.State = state
 	e.Refresh()
 
-	return func() { e.State, e.snapshot = oldState, oldSnapshot }
+	return e.undo(func() { e.State, e.snapshot = oldState, oldSnapshot })
+}
+
+// SetMembers records the entries a loaded one-to-many relation holds. The maps
+// are replaced, never changed, so an undo keeps the ones it saw.
+func (e *Entry) SetMembers(r *meta.Relation, members map[any]*Entry) {
+	next := maps.Clone(e.Members)
+	if next == nil {
+		next = map[*meta.Relation]map[any]*Entry{}
+	}
+
+	next[r] = members
+	e.Members = next
+	e.rev++
+}
+
+// SetParent records the key a loaded many-to-one relation holds.
+func (e *Entry) SetParent(r *meta.Relation, key any) {
+	next := maps.Clone(e.Parents)
+	if next == nil {
+		next = map[*meta.Relation]any{}
+	}
+
+	next[r] = key
+	e.Parents = next
+	e.rev++
+}
+
+// SetLinks replaces what the loaded relations hold, and returns how to undo that.
+func (e *Entry) SetLinks(
+	members map[*meta.Relation]map[any]*Entry,
+	parents map[*meta.Relation]any,
+) (undo func()) {
+	oldMembers, oldParents := e.Members, e.Parents
+	e.Members, e.Parents = members, parents
+
+	return e.undo(func() { e.Members, e.Parents = oldMembers, oldParents })
+}
+
+// undo returns restore for a rollback, made safe against later changes. A
+// rollback can be reversed late, once another operation has let go of the
+// tracker, and that operation may have changed the entry since. Its change then
+// stands, and an entry it left unchanged becomes Modified: neither write knew
+// what the other left in the database, so the next save writes every column.
+//
+// Undos run newest first, and each puts the count back to what it was before its
+// change, so the one before it still finds the entry as it left it.
+func (e *Entry) undo(restore func()) func() {
+	e.rev++
+	rev := e.rev
+
+	return func() {
+		switch {
+		case e.rev == rev:
+			restore()
+
+			e.rev = rev - 1
+		case e.State == Unchanged:
+			e.State = Modified
+			e.rev++
+		}
+	}
 }
 
 type identity struct {
@@ -152,9 +215,12 @@ func (t *Tracker) TryClaim() *Claim {
 	}
 }
 
+// own makes a new claim the owner. Rollback work that was queued before it ran
+// first, so the operation starts from what the tracker should hold.
 func (t *Tracker) own() *Claim {
 	c := new(Claim)
 	t.owner.Store(c)
+	t.runUndo()
 
 	return c
 }
@@ -322,12 +388,26 @@ func (t *Tracker) put(m *meta.Model, entity unsafe.Pointer, state State) *Entry 
 			t.OnState(e, e.State, state)
 		}
 
+		if e.State != state {
+			e.rev++
+		}
+
 		e.State = state
 
 		return e
 	}
 
 	return t.add(m, entity, state)
+}
+
+// Added tracks a written entity, and returns how to undo that if the write rolls
+// back: stop tracking it, unless something changed it since.
+func (t *Tracker) Added(m *meta.Model, entity unsafe.Pointer) (undo func()) {
+	t.mu.Lock()
+	e := t.put(m, entity, Unchanged)
+	t.mu.Unlock()
+
+	return e.undo(func() { t.Remove(entity) })
 }
 
 // Rekey records the key of an entity that received one on insert.
@@ -378,12 +458,15 @@ func (t *Tracker) Remove(entity unsafe.Pointer) {
 	}
 }
 
-// Forget stops tracking an entry, which may no longer own its address.
-func (t *Tracker) Forget(e *Entry) {
+// Forget stops tracking an entry, which may no longer own its address, and
+// returns how to undo that.
+func (t *Tracker) Forget(e *Entry) (undo func()) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	t.forget(e)
+
+	return func() { t.Restore(e) }
 }
 
 // ForgetRow stops tracking every instance of a row, and returns how to undo that.
@@ -422,10 +505,15 @@ func (t *Tracker) forget(e *Entry) {
 	}
 }
 
-// Restore tracks an entry again, undoing Forget.
+// Restore tracks an entry again, undoing Forget, unless another entry has taken
+// its address since.
 func (t *Tracker) Restore(e *Entry) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if other, ok := t.entries[e.Entity]; ok && other != e {
+		return
+	}
 
 	t.entries[e.Entity] = e
 

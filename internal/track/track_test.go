@@ -2,6 +2,7 @@ package track
 
 import (
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -312,5 +313,91 @@ func TestUndoUnderContention(t *testing.T) {
 
 	if got := ran.Load(); got != 5000 {
 		t.Fatalf("ran %d of 5000", got)
+	}
+}
+
+// A claim runs rollback work that was queued while the tracker was free, which
+// happens when the work arrives as the last holder lets go.
+func TestClaimRunsQueuedUndo(t *testing.T) {
+	tr := New()
+	ran := false
+
+	tr.mu.Lock()
+	tr.undo = append(tr.undo, func() { ran = true })
+	tr.mu.Unlock()
+
+	c := tr.TryClaim()
+	defer tr.Release(c)
+
+	if !ran {
+		t.Fatal("the claim came back before the queued work ran")
+	}
+}
+
+// An undo restores what its change replaced, unless the entry changed since:
+// then the newer change stands, and an unchanged entry becomes Modified, so the
+// next save writes every column.
+func TestUndoAfterALaterChange(t *testing.T) {
+	m := meta.OfType(reflect.TypeFor[row]())
+	tr := New()
+	r := &row{ID: 1, Name: "a"}
+	e := tr.Track(m, unsafe.Pointer(r), Added)
+
+	t.Run("in time, it restores", func(t *testing.T) {
+		undo := e.Saved(Unchanged)
+		undo()
+
+		if e.State != Added {
+			t.Fatalf("state %s", e.State)
+		}
+	})
+
+	t.Run("newest first, each finds the entry as it left it", func(t *testing.T) {
+		saved := e.Saved(Unchanged)
+		links := e.SetLinks(nil, nil)
+		links()
+		saved()
+
+		if e.State != Added {
+			t.Fatalf("state %s", e.State)
+		}
+	})
+
+	t.Run("too late, the newer write stands", func(t *testing.T) {
+		undo := e.Saved(Unchanged)
+		e.Saved(Unchanged) // a newer save, by another operation
+		undo()
+
+		if e.State != Modified {
+			t.Fatalf("state %s, want Modified", e.State)
+		}
+	})
+
+	t.Run("too late after a delete, the delete stands", func(t *testing.T) {
+		undo := e.Saved(Unchanged)
+
+		tr.Track(m, unsafe.Pointer(r), Deleted)
+		undo()
+
+		if e.State != Deleted {
+			t.Fatalf("state %s, want Deleted", e.State)
+		}
+	})
+}
+
+// Restore does not take back an address another entry holds now.
+func TestRestoreKeepsANewerEntry(t *testing.T) {
+	m := meta.OfType(reflect.TypeFor[row]())
+	tr := New()
+	r := &row{ID: 1}
+	old := tr.Track(m, unsafe.Pointer(r), Unchanged)
+	undo := tr.Forget(old)
+
+	newer := tr.Track(m, unsafe.Pointer(r), Added)
+
+	undo()
+
+	if tr.Get(unsafe.Pointer(r)) != newer {
+		t.Fatal("the forgotten entry took the address back")
 	}
 }

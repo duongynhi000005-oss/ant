@@ -1326,9 +1326,7 @@ func (u *unit) commit() {
 	for _, n := range u.order {
 		entry := n.entry
 		if entry != nil && (n.remove || n.entity != entry.Entity) {
-			tracker.Forget(entry)
-
-			undo = append(undo, func() { tracker.Restore(entry) })
+			undo = append(undo, tracker.Forget(entry))
 		}
 	}
 
@@ -1346,10 +1344,7 @@ func (u *unit) commit() {
 				tracker.Rekey(entry)
 			}
 		case entry == nil && wrote && u.s.settings.tracking && len(n.model.Keys) > 0:
-			entity := n.entity
-			tracker.Track(n.model, entity, track.Unchanged)
-
-			undo = append(undo, func() { tracker.Remove(entity) })
+			undo = append(undo, tracker.Added(n.model, n.entity))
 		}
 	}
 
@@ -1403,9 +1398,7 @@ func (u *unit) remember(n *node) (undo func()) {
 		}
 	}
 
-	entry.Members, entry.Parents = members, parents
-
-	return func() { entry.Members, entry.Parents = oldMembers, oldParents }
+	return entry.SetLinks(members, parents)
 }
 
 // SaveChanges writes every change to tracked entities in one transaction:

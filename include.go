@@ -458,11 +458,7 @@ func trackMany[R any](s *state, r *meta.Relation, link meta.Link, parents []unsa
 		}
 
 		if e := s.tracker.Get(p); e != nil {
-			if e.Members == nil {
-				e.Members = map[*meta.Relation]map[any]*track.Entry{}
-			}
-
-			e.Members[r] = members
+			e.SetMembers(r, members)
 		}
 	}
 }
@@ -514,12 +510,8 @@ func loadOne[R any](
 				continue
 			}
 
-			if e.Parents == nil {
-				e.Parents = map[*meta.Relation]any{}
-			}
-
 			key, _ := link.Target.KeyOf(unsafe.Pointer(*slot[*R](p, r)))
-			e.Parents[r] = key
+			e.SetParent(r, key)
 		}
 	}
 

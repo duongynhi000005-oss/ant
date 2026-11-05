@@ -343,6 +343,51 @@ func TestConcurrentUse(t *testing.T) {
 
 		// A session made inside a transaction has its own tracker, and the
 		// rollback reverses that one, after a load on the session lets go of it.
+		// The rollback is reversed after a newer insert of the same entity: the
+		// newer write stands, so the next save does not insert the row twice.
+		t.Run("a late rollback leaves a newer write alone", func(t *testing.T) {
+			dan := &User{Name: "Dan", Email: "dan.late@example.com"}
+			require.NoError(t, ant.Add(db, dan))
+
+			saved, abort := make(chan struct{}), make(chan struct{})
+			finished := make(chan error, 1)
+
+			go func() {
+				finished <- db.Tx(ctx, func(tx *AppDB) error {
+					if err := tx.SaveChanges(ctx); err != nil {
+						return err
+					}
+
+					close(saved)
+					<-abort
+
+					return errors.New("roll back")
+				})
+			}()
+
+			<-saved
+			require.Equal(t, ant.Unchanged, ant.Entry(db, dan).State())
+
+			err := h.while(
+				t,
+				func(ctx context.Context) error {
+					return db.Users.Insert(ctx, dan)
+				},
+				func() {
+					close(abort)
+					require.ErrorContains(t, <-finished, "roll back")
+				},
+			)
+			require.NoError(t, err, "the second insert went in after the rollback")
+
+			require.NoError(t, db.SaveChanges(ctx), "and is not inserted again")
+			require.Equal(t, ant.Unchanged, ant.Entry(db, dan).State())
+
+			n, err := db.Users.Where(ant.Eq(&U.Email, dan.Email)).Count(ctx)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, n)
+		})
+
 		t.Run("a session made in a transaction reverses its own tracker", func(t *testing.T) {
 			type opened struct {
 				session *AppDB
@@ -455,10 +500,13 @@ func TestConcurrentUse(t *testing.T) {
 		})
 
 		t.Run("work that leaves the tracker alone goes on alongside", func(t *testing.T) {
-			err := h.while(t, load, func() {
+			count, err := db.Users.Count(ctx)
+			require.NoError(t, err)
+
+			err = h.while(t, load, func() {
 				n, err := db.Users.Count(ctx)
 				require.NoError(t, err)
-				require.EqualValues(t, 3, n)
+				require.Equal(t, count, n)
 
 				found, err := db.Users.Where(ant.Eq(&U.Name, "Bob")).Exists(ctx)
 				require.NoError(t, err)
@@ -473,7 +521,7 @@ func TestConcurrentUse(t *testing.T) {
 
 				names, err := db.Users.Query().Column(&U.Name).All(ctx)
 				require.NoError(t, err)
-				require.Len(t, names, 3, "a partial row is never tracked")
+				require.Len(t, names, int(count), "a partial row is never tracked")
 
 				changed, err := db.Users.Where(ant.Eq(&U.Name, "nobody")).
 					Update(ctx, ant.Set(&U.Age, 1))
@@ -482,7 +530,7 @@ func TestConcurrentUse(t *testing.T) {
 
 				session, err := ant.Session(db).Users.Include(&U.Posts).All(ctx)
 				require.NoError(t, err, "a session has a tracker of its own")
-				require.Len(t, session, 3)
+				require.Len(t, session, int(count))
 			})
 			require.NoError(t, err)
 		})
