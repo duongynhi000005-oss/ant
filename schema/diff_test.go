@@ -644,6 +644,26 @@ func TestRenames(t *testing.T) {
 					"the snapshot already has a table people",
 				},
 				{
+					"a table onto one migrations leave alone",
+					&schema.Schema{
+						Tables:    []*schema.Table{users()},
+						Unmanaged: []schema.Ref{{Name: "people"}},
+					},
+					of(people),
+					[]string{"users=people"},
+					"a table people already exists, outside migrations",
+				},
+				{
+					"a table, where the only new one exists outside migrations",
+					&schema.Schema{
+						Tables:    []*schema.Table{users()},
+						Unmanaged: []schema.Ref{{Name: "people"}},
+					},
+					of(people),
+					[]string{"users=peple"},
+					"models have no table peple; the models have no new table",
+				},
+				{
 					"a table into another schema",
 					of(orders),
 					of(purchases),
