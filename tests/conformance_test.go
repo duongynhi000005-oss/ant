@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -725,5 +726,160 @@ func TestConformanceLateralJoin(t *testing.T) {
 
 		require.NoError(t, err)
 		require.Equal(t, []string{"newer"}, newest)
+	})
+}
+
+// Moment holds a time in every shape a model can, to see each bound the same way.
+type Moment struct {
+	ID        int64
+	At        time.Time
+	Maybe     *time.Time
+	Opt       sql.Null[time.Time]
+	Legacy    sql.NullTime
+	DeletedAt ant.DeletedAt
+}
+
+func (Moment) Configure(b *ant.ModelBuilder[Moment]) { b.Table("moments") }
+
+var Mo = ant.Fields[Moment]()
+
+type MomentDB struct {
+	ant.Context
+	Moments ant.Table[Moment]
+}
+
+// timestamps is the column type for a time on each database, as the fixture uses.
+var timestamps = map[string]string{
+	"postgres":  "TIMESTAMPTZ",
+	"mysql":     "DATETIME(6)",
+	"mariadb":   "DATETIME(6)",
+	"sqlite":    "TIMESTAMP",
+	"sqlserver": "DATETIME2",
+}
+
+// A time is one instant, whatever zone it was made in and whatever holds it: a
+// pointer, sql.Null, sql.NullTime, ant.DeletedAt, or an argument of a raw query.
+// SQL Server and SQLite keep no zone, so ant stores them all in UTC there.
+func TestConformanceTimeShapes(t *testing.T) {
+	testdb.ForEach(t, func(t *testing.T, target testdb.Target) {
+		ctx := t.Context()
+		ts := timestamps[target.Name]
+		_, err := target.DB.ExecContext(ctx, fmt.Sprintf(
+			`CREATE TABLE moments (
+			id BIGINT PRIMARY KEY,
+			at %[1]s NOT NULL,
+			maybe %[1]s NULL,
+			opt %[1]s NULL,
+			legacy %[1]s NULL,
+			deleted_at %[1]s NULL)`,
+			ts,
+		))
+		require.NoError(t, err)
+
+		t.Cleanup(func() {
+			_, _ = target.DB.ExecContext(context.Background(), "DROP TABLE moments")
+		})
+
+		db, err := ant.Open[MomentDB](ctx, target.Dialect, target.DSN, ant.WithTracking(false))
+		require.NoError(t, err)
+		t.Cleanup(func() { db.Close() })
+
+		east := time.FixedZone("UTC+3", 3*60*60)
+		at := time.Date(2026, 1, 2, 15, 4, 5, 0, east) // 12:04:05 UTC
+		later := at.Add(time.Hour)
+
+		full := &Moment{
+			ID:        1,
+			At:        at,
+			Maybe:     &at,
+			Opt:       sql.Null[time.Time]{V: at, Valid: true},
+			Legacy:    sql.NullTime{Time: at, Valid: true},
+			DeletedAt: ant.DeletedAt{Null: sql.Null[time.Time]{V: at, Valid: true}},
+		}
+
+		empty := &Moment{ID: 2, At: at}
+		require.NoError(t, db.Moments.Insert(ctx, full, empty))
+
+		read := func(id int64) *Moment {
+			t.Helper()
+
+			m, err := db.Moments.WithDeleted().Where(ant.Eq(&Mo.ID, id)).First(ctx)
+			require.NoError(t, err)
+
+			return m
+		}
+
+		t.Run("each shape reads back as the same instant", func(t *testing.T) {
+			m := read(1)
+			require.True(t, at.Equal(m.At), "time.Time: %v", m.At)
+			require.NotNil(t, m.Maybe)
+			require.True(t, at.Equal(*m.Maybe), "*time.Time: %v", *m.Maybe)
+			require.True(t, at.Equal(m.Opt.V), "sql.Null: %v", m.Opt.V)
+			require.True(t, at.Equal(m.Legacy.Time), "sql.NullTime: %v", m.Legacy.Time)
+			require.True(t, at.Equal(m.DeletedAt.V), "ant.DeletedAt: %v", m.DeletedAt.V)
+
+			m = read(2)
+			require.Nil(t, m.Maybe)
+			require.False(t, m.Opt.Valid)
+			require.False(t, m.Legacy.Valid)
+			require.False(t, m.DeletedAt.Valid)
+		})
+
+		t.Run("each shape finds its row", func(t *testing.T) {
+			conds := map[string]ant.Cond{
+				"time.Time":    ant.Eq(&Mo.At, at),
+				"*time.Time":   ant.Eq(&Mo.Maybe, &at),
+				"sql.Null":     ant.Eq(&Mo.Opt, sql.Null[time.Time]{V: at, Valid: true}),
+				"sql.NullTime": ant.Eq(&Mo.Legacy, sql.NullTime{Time: at, Valid: true}),
+				"ant.DeletedAt": ant.Eq(
+					&Mo.DeletedAt,
+					ant.DeletedAt{Null: sql.Null[time.Time]{V: at, Valid: true}},
+				),
+			}
+
+			for name, cond := range conds {
+				n, err := db.Moments.WithDeleted().
+					Where(cond).
+					Where(ant.Eq(&Mo.ID, int64(1))).
+					Count(ctx)
+				require.NoError(t, err, name)
+				require.EqualValues(t, 1, n, name)
+			}
+		})
+
+		t.Run("an update stores the same instant", func(t *testing.T) {
+			_, err := db.Moments.WithDeleted().Where(ant.Eq(&Mo.ID, int64(2))).Update(ctx,
+				ant.Set(&Mo.Maybe, &later),
+				ant.Set(&Mo.Opt, sql.Null[time.Time]{V: later, Valid: true}),
+				ant.Set(&Mo.Legacy, sql.NullTime{Time: later, Valid: true}))
+			require.NoError(t, err)
+
+			m := read(2)
+			require.True(t, later.Equal(*m.Maybe), "*time.Time: %v", *m.Maybe)
+			require.True(t, later.Equal(m.Opt.V), "sql.Null: %v", m.Opt.V)
+			require.True(t, later.Equal(m.Legacy.Time), "sql.NullTime: %v", m.Legacy.Time)
+		})
+
+		t.Run("a raw query's argument is the same instant", func(t *testing.T) {
+			n, err := ant.Raw[int64](db, "SELECT COUNT(*) FROM moments WHERE at = ?", at).First(ctx)
+			require.NoError(t, err)
+			require.EqualValues(t, 2, *n)
+
+			n, err = ant.Raw[int64](
+				db,
+				"SELECT COUNT(*) FROM moments WHERE maybe = @when",
+				sql.Named("when", &at),
+			).First(ctx)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, *n)
+		})
+
+		t.Run("the stored clock is the same, past ant", func(t *testing.T) {
+			var stored time.Time
+			require.NoError(t, target.DB.QueryRowContext(ctx,
+				"SELECT maybe FROM moments WHERE id = 1").Scan(&stored))
+
+			require.True(t, at.Equal(stored), "stored %v", stored)
+		})
 	})
 }

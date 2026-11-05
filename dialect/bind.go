@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
+
+	"github.com/skudra-go/ant/qb"
 )
 
 // Bind prepares raw SQL for d. Three forms of argument are accepted:
@@ -22,6 +25,10 @@ import (
 // value, so = ANY(@ids) passes an array. Text in strings, quoted identifiers,
 // comments, and dollar quotes is left alone, as are operators like @>.
 func Bind(d Dialect, query string, args []any) (string, []any, error) {
+	if SyntaxOf(d).UTCTimes {
+		args = utcArgs(args)
+	}
+
 	named := map[string]any{}
 
 	for _, a := range args {
@@ -40,6 +47,54 @@ func Bind(d Dialect, query string, args []any) (string, []any, error) {
 	}
 
 	return query, args, nil
+}
+
+// utcArgs returns raw arguments with their times in UTC, named ones included.
+func utcArgs(args []any) []any {
+	out := make([]any, len(args))
+
+	for i, a := range args {
+		if n, ok := a.(sql.NamedArg); ok {
+			n.Value = utc(n.Value)
+			out[i] = n
+
+			continue
+		}
+
+		out[i] = utc(a)
+	}
+
+	return out
+}
+
+// utc returns v with its time in UTC, for a database whose columns drop the
+// zone, wherever the time is held: directly, behind a pointer, in sql.Null or
+// sql.NullTime, in a qb.Secret, or behind any driver.Valuer, such as
+// ant.DeletedAt. Anything else, and NULL, comes back as it was.
+func utc(v any) any {
+	switch t := v.(type) {
+	case time.Time:
+		return t.UTC()
+	case *time.Time:
+		if t != nil {
+			return t.UTC()
+		}
+	case qb.Secret:
+		return qb.Secret{V: utc(t.V)}
+	case driver.Valuer:
+		// database/sql treats a nil pointer as NULL without calling Value.
+		if rv := reflect.ValueOf(t); rv.Kind() == reflect.Pointer && rv.IsNil() {
+			return v
+		}
+
+		if value, err := t.Value(); err == nil {
+			if at, ok := value.(time.Time); ok {
+				return at.UTC()
+			}
+		}
+	}
+
+	return v
 }
 
 func bindNamed(d Dialect, query string, named map[string]any) (string, []any, error) {
