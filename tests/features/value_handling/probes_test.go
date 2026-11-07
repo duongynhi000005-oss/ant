@@ -3921,6 +3921,7 @@ func TestProbeOddKeys(t *testing.T) {
 			e := &prBytesKey{ID: []byte{0, 1, 2, 255}, Name: "a"}
 			require.NoError(t, db.ByteKeys.Insert(ctx, e))
 
+			//antvet:ignore the probe asks what a string key does for a []byte key
 			got, err := db.ByteKeys.Find(ctx, string([]byte{0, 1, 2, 255}))
 			if err != nil {
 				t.Logf("Find with a string for a []byte key: %v", err)
