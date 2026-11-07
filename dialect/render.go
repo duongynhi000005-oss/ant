@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/skudra-go/ant/internal/errs"
 	"github.com/skudra-go/ant/qb"
@@ -117,8 +116,8 @@ func (r *renderer) write(s string) { r.sql.WriteString(s) }
 func (r *renderer) quote(ident string) { r.write(r.d.Quote(ident)) }
 
 func (r *renderer) bind(v any) {
-	if t, ok := v.(time.Time); ok && r.s.UTCTimes {
-		v = t.UTC()
+	if r.s.UTCTimes {
+		v = utc(v)
 	}
 
 	r.args = append(r.args, v)
